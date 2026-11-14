@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.11] - 2026-11-14
+
+### 变更
+
+- `sendAtAllFallback` 改为继承调用方 `ctx`，不再用 `context.Background()`
+- 备用端请求超时由 10 秒改为 1 分钟（与主端 `send_group_msg` 同一条响应链路，
+  拖慢的只是这个 action 自己）
+- README 新增「@全体 备用端」章节
+
+### 文档
+
+- 补充关键前提：**备用端必须屏蔽目标群的群消息接收**。
+  备用端接收群消息与发送消息会争抢同一把内部锁，若它照常接收该群消息
+  （尤其是主端刚发出的带图片的 markdown 消息），随后发 `@全体` 会失败，
+  报 `Cannot read properties of null (reading 'flashTransferInfo')`
+
 ## [0.3.10] - 2026-11-14
 
 ### 修复

@@ -655,7 +655,7 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 		if len(retryOut) > 0 {
 			if res, rerr := c.sendOutbounds(ctx, b, "group", openid, retryOut); rerr == nil {
 				c.logger.Warn("去掉 @全体 后发送成功", "bot", c.botID, "group", openid, "error", err)
-				c.sendAtAllFallback(openid)
+				c.sendAtAllFallback(ctx, openid)
 				return okResponse(c.messageData("group", openid, res.ID))
 			}
 		}
@@ -667,7 +667,7 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 
 // sendAtAllFallback 主端发不出 @全体 时, 让配置好的备用 OneBot 端补一条
 // 备用端按群配置, 失败只记日志, 不影响主流程结果
-func (c *BotContext) sendAtAllFallback(groupOpenID string) {
+func (c *BotContext) sendAtAllFallback(ctx context.Context, groupOpenID string) {
 	groupNumber, fallbackID, ok := c.ids.Fallback(groupOpenID)
 	if !ok {
 		c.logger.Debug("没有可用的 @全体 备用端", "bot", c.botID, "group", groupOpenID)
@@ -681,7 +681,7 @@ func (c *BotContext) sendAtAllFallback(groupOpenID string) {
 	if client == nil {
 		return
 	}
-	if err := client.SendAtAll(context.Background(), groupNumber); err != nil {
+	if err := client.SendAtAll(ctx, groupNumber); err != nil {
 		c.logger.Warn("备用端补 @全体 失败", "bot", c.botID, "group", groupNumber, "error", err)
 		return
 	}

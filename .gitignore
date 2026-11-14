@@ -2,3 +2,8 @@ pb_data/
 pb_migrations/
 go-onebots
 *.log
+
+.env
+.env.*
+!.env.example
+__debug_bin*

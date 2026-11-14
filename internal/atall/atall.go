@@ -18,7 +18,8 @@ import (
 )
 
 // requestTimeout 备用端请求超时
-const requestTimeout = 10 * time.Second
+// 与主端的 send_group_msg 同一条响应链路, 拖慢的是这个 action 自己
+const requestTimeout = time.Minute
 
 // Client 备用 OneBot 端的 HTTP 调用器
 type Client struct {
