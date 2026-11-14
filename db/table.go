@@ -15,4 +15,6 @@ const (
 	TableMedia = "onebot_media"
 	// TableOutbox 出站消息队列, 先落库再发送, 支持崩溃后补发
 	TableOutbox = "onebot_outbox"
+	// TableAtFallback @全体 备用端配置, 由 onebot_id_map 的群记录引用
+	TableAtFallback = "onebot_at_fallback"
 )

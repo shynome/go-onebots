@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/db"
+	"github.com/shynome/go-onebots/internal/atall"
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
@@ -654,6 +655,7 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 		if len(retryOut) > 0 {
 			if res, rerr := c.sendOutbounds(ctx, b, "group", openid, retryOut); rerr == nil {
 				c.logger.Warn("去掉 @全体 后发送成功", "bot", c.botID, "group", openid, "error", err)
+				c.sendAtAllFallback(openid)
 				return okResponse(c.messageData("group", openid, res.ID))
 			}
 		}
@@ -661,6 +663,29 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 
 	c.logger.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
 	return failResponse(1200, "发送失败: "+err.Error())
+}
+
+// sendAtAllFallback 主端发不出 @全体 时, 让配置好的备用 OneBot 端补一条
+// 备用端按群配置, 失败只记日志, 不影响主流程结果
+func (c *BotContext) sendAtAllFallback(groupOpenID string) {
+	groupNumber, fallbackID, ok := c.ids.Fallback(groupOpenID)
+	if !ok {
+		c.logger.Debug("没有可用的 @全体 备用端", "bot", c.botID, "group", groupOpenID)
+		return
+	}
+	client, err := atall.Load(c.mgr.app, fallbackID)
+	if err != nil {
+		c.logger.Warn("加载 @全体 备用端配置失败", "bot", c.botID, "error", err)
+		return
+	}
+	if client == nil {
+		return
+	}
+	if err := client.SendAtAll(context.Background(), groupNumber); err != nil {
+		c.logger.Warn("备用端补 @全体 失败", "bot", c.botID, "group", groupNumber, "error", err)
+		return
+	}
+	c.logger.Info("备用端已补发 @全体", "bot", c.botID, "group", groupNumber)
 }
 
 // hasAtAllSegs 判断段里是否含 @全体

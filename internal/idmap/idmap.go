@@ -360,6 +360,21 @@ func (m *Map) OpenIDByNumber(kind Kind, number int64) (string, error) {
 	return recs[0].GetString("openid"), nil
 }
 
+// Fallback 返回群记录上配的真实群号与 @全体 备用端记录 id
+// 任一缺失时 ok 为 false, 表示不触发备用端
+func (m *Map) Fallback(groupOpenID string) (groupNumber int64, fallbackID string, ok bool) {
+	rec, err := m.app.FindFirstRecordByFilter(db.TableIDMap,
+		"bot = {:bot} && kind = 'group' && openid = {:openid}",
+		dbx.Params{"bot": m.botID, "openid": groupOpenID},
+	)
+	if err != nil || rec == nil {
+		return 0, "", false
+	}
+	groupNumber = int64(rec.GetInt("qq_number"))
+	fallbackID = rec.GetString("at_fallback")
+	return groupNumber, fallbackID, groupNumber > 0 && fallbackID != ""
+}
+
 // ListNums 列出某类型的全部 num(用于 get_group_list)
 func (m *Map) ListNums(kind Kind) ([]int64, error) {
 	recs, err := m.app.FindRecordsByFilter(
