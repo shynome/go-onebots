@@ -6,6 +6,7 @@
 
 - OneBot v11 HTTP API：`POST /onebot/v11/{botId}/{action}`，与 WebSocket 共用同一套 action 实现
 - 认证支持 `Authorization: Bearer` 与 `?access_token=` 两种写法，WS 与 HTTP 统一校验
+- `examples/zerobot` 支持 `ONEBOT_MODE=http` 切换到 HTTP driver（仅 action，事件上报暂未实现）
 
 ## [0.1.0] - 2026-11-14
 

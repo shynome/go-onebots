@@ -96,8 +96,11 @@ curl -H 'Authorization: Bearer <onebot_token>' \
 curl -X POST 'http://127.0.0.1:8090/onebot/v11/<botId>/get_login_info?access_token=<onebot_token>' -d '{}'
 ```
 
-注意 ZeroBot 的 HTTP driver 是混合模式：`NewHTTPClient(httpURL, token, wsURL)` 只把 **action**
-走 HTTP，**事件仍然走 WebSocket**，所以 WS 同时保留。纯 HTTP（webhook 上报）需要自己实现上报端。
+注意 ZeroBot 的 HTTP driver 是**纯 HTTP 模式**：`NewHTTPClient(url, token, callerURL, callerToken)`
+中 `callerURL` 是 action 请求地址（即上面的接口），`url` 是 ZeroBot 自己监听的地址，
+用于**接收服务端上报的事件**（可选 `X-Signature: sha1=<hmac-sha1>` 校验）。
+本项目目前只提供 action 接口，**尚未实现事件 HTTP 上报**，所以 ZeroBot 的 HTTP driver
+只能完成握手与发消息，收不到事件；需要接收事件请继续用 WebSocket driver。
 
 ### ZeroBot 接入
 
