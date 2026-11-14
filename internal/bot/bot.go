@@ -61,8 +61,9 @@ func Start(app core.App, record *core.Record) *Bot {
 		App:    app,
 		Record: record,
 		client: qqbot.New(qqbot.Config{
-			AppID:     record.GetString("app_id"),
-			AppSecret: record.GetString("app_secret"),
+			AppID:        record.GetString("app_id"),
+			AppSecret:    record.GetString("app_secret"),
+			SessionStore: newWSStateStore(app, record.Id),
 		}),
 		done: make(chan struct{}),
 	}

@@ -26,11 +26,19 @@ const (
 	tokenRefreshAhead = 60 * time.Second
 )
 
+// SessionStore 持久化网关会话与 seq, 进程重启后仍能 resume
+// 实现应允许并发调用, 且不得因失败阻断事件处理
+type SessionStore interface {
+	LoadSession() (sessionID string, seq uint64)
+	SaveSession(sessionID string, seq uint64)
+}
+
 type Config struct {
-	AppID      string
-	AppSecret  string
-	Endpoint   string
-	HTTPClient *http.Client
+	AppID        string
+	AppSecret    string
+	Endpoint     string
+	HTTPClient   *http.Client
+	SessionStore SessionStore
 }
 
 func (c Config) endpoint() string {
@@ -57,6 +65,7 @@ type Client struct {
 	sessMu    sync.Mutex
 	sessionID string
 	seq       uint64
+	loaded    bool
 }
 
 func New(cfg Config) *Client {
@@ -208,21 +217,32 @@ func (c *Client) Call(ctx context.Context, method, path string, body any, out an
 // ClearSession 丢弃当前 ws 会话, 下次连接走 identify 而不是 resume
 func (c *Client) ClearSession() {
 	c.sessMu.Lock()
-	defer c.sessMu.Unlock()
 	c.sessionID = ""
 	c.seq = 0
+	c.loaded = true
+	c.sessMu.Unlock()
+	c.persist("", 0)
 }
 
 func (c *Client) session() (string, uint64) {
 	c.sessMu.Lock()
 	defer c.sessMu.Unlock()
+
+	if !c.loaded {
+		c.loaded = true
+		if c.cfg.SessionStore != nil {
+			c.sessionID, c.seq = c.cfg.SessionStore.LoadSession()
+		}
+	}
 	return c.sessionID, c.seq
 }
 
 func (c *Client) saveSession(sessionID string) {
 	c.sessMu.Lock()
-	defer c.sessMu.Unlock()
 	c.sessionID = sessionID
+	seq := c.seq
+	c.sessMu.Unlock()
+	c.persist(sessionID, seq)
 }
 
 func (c *Client) saveSeq(seq uint64) {
@@ -230,6 +250,15 @@ func (c *Client) saveSeq(seq uint64) {
 		return
 	}
 	c.sessMu.Lock()
-	defer c.sessMu.Unlock()
 	c.seq = seq
+	sessionID := c.sessionID
+	c.sessMu.Unlock()
+	c.persist(sessionID, seq)
+}
+
+func (c *Client) persist(sessionID string, seq uint64) {
+	if c.cfg.SessionStore == nil {
+		return
+	}
+	c.cfg.SessionStore.SaveSession(sessionID, seq)
 }
