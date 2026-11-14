@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### 新增
+
+- 内网媒体自动转存：URL 指向 `10/8`、`172.16/12`、`192.168/16`、`127/8`、`localhost`、
+  `*.local` 或无点主机名时，先由服务端下载并存入 PocketBase，再用预签名 URL 发给 QQ
+  （单文件 20MB 上限，30 秒下载超时）
+
+### 变更
+
+- `onebot_media` 删除从未使用的 `size` / `content_type` 字段（文件信息由 PocketBase 存储层管理）
+
 ## [0.2.0] - 2026-11-14
 
 ### 新增

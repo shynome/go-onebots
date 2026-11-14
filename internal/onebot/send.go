@@ -9,7 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -401,7 +403,7 @@ func (c *BotContext) sendQQMessage(ctx context.Context, b *bot.Bot, scene, openi
 }
 
 // resolveMediaURL 把消息段里的媒体来源转成 QQ 可访问的 URL
-// 公网 URL 直接透传, base64 / 本地文件存进 PocketBase 后返回 /api/files 链接
+// 公网 URL 直接透传, base64 / 本地文件 / 内网 URL 存进 PocketBase 后返回预签名链接
 func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, error) {
 	if m.url != "" {
 		return m.url, nil
@@ -410,6 +412,9 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 
 	switch {
 	case strings.HasPrefix(file, "http://"), strings.HasPrefix(file, "https://"):
+		if needMirror(file) {
+			return c.mirrorRemoteMedia(ctx, file, m.kind)
+		}
 		return file, nil
 
 	case strings.HasPrefix(file, "base64://"):
@@ -432,6 +437,71 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 		}
 		return url, verifyMediaURL(ctx, url)
 	}
+}
+
+// maxMirrorSize 内网媒体转存时允许的最大体积
+const maxMirrorSize = 20 << 20
+
+// needMirror 判断 URL 是否指向内网或本机地址
+// QQ 服务器在公网, 拉不到这类地址, 必须先由服务端自己下载转存
+func needMirror(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+
+	// IP 字面量按网段判断, 避免 IPv6 公网地址被主机名规则误判
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsPrivate() || ip.IsLoopback() ||
+			ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+
+	switch {
+	case strings.EqualFold(host, "localhost"),
+		strings.HasSuffix(strings.ToLower(host), ".local"),
+		// 不含点的单段主机名(如 http://nas/xxx)只可能在内网解析
+		!strings.Contains(host, "."):
+		return true
+	}
+	return false
+}
+
+// mirrorRemoteMedia 把内网媒体下载下来存进 PocketBase, 返回 QQ 可访问的预签名 URL
+func (c *BotContext) mirrorRemoteMedia(ctx context.Context, rawURL, kind string) (string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("内网媒体需要服务端本身能访问该地址, 下载失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("下载内网媒体失败: HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxMirrorSize+1))
+	if err != nil {
+		return "", fmt.Errorf("读取内网媒体失败: %w", err)
+	}
+	if len(data) > maxMirrorSize {
+		return "", fmt.Errorf("内网媒体超过 %d MB 上限", maxMirrorSize>>20)
+	}
+
+	name := "media" + extensionOf(data)
+	link, err := media.New(c.mgr.app).SaveBytes(c.botID, kind, name, data)
+	if err != nil {
+		return "", err
+	}
+	return link, verifyMediaURL(ctx, link)
 }
 
 // extensionOf 根据文件头推断扩展名, PocketBase 会用文件名后缀判断 MIME
