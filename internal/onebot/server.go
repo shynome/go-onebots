@@ -632,7 +632,11 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindGroup, groupID)
 	if err != nil {
-		return failResponse(1400, "未知的 group_id: "+itoa(groupID)+", 需要先收到该群的消息才能发送")
+		// 不是映射 id 时, 尝试当作真实群号去绑定表里查
+		openid, err = c.groupOpenIDByNumber(groupID)
+		if err != nil {
+			return failResponse(1400, err.Error())
+		}
 	}
 
 	hasAtAll := false

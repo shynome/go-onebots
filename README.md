@@ -167,6 +167,17 @@ docker run -d --name onebots \
 `/app/pb_data` 是 PocketBase 数据目录（数据库、上传文件、S3 等全部设置都在这里），
 必须挂载出来，否则重建容器会丢失全部配置。首次启动后访问 `/_/` 创建管理员。
 
+## 发消息用真实群号
+
+QQ 官方 API 只有 `group_openid`，不提供真实群号，所以需要手工绑定一次：
+
+1. 让机器人先在该群收到一条消息，后台 `onebot_id_map` 里会出现一条 `kind=group` 的记录，
+   复制它的 `openid`
+2. 在 `onebot_group_bind` 里新增：`bot` + `qq_number`（真实群号）+ `group_openid`
+3. 之后 `send_group_msg` 的 `group_id` 可以直接传真实群号，映射 id 仍然可用
+
+注意这只影响**发送**；事件里的 `group_id` 仍是映射后的 id（以 `10000000000` 打头）。
+
 ## 管理动作
 
 在 `qq_bots` 记录的 `do_action` 里选择：

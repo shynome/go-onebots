@@ -15,4 +15,6 @@ const (
 	TableMedia = "onebot_media"
 	// TableOutbox 出站消息队列, 先落库再发送, 支持崩溃后补发
 	TableOutbox = "onebot_outbox"
+	// TableGroupBind 真实群号 <-> group_openid 绑定 (官方不提供群号, 只能人工绑定)
+	TableGroupBind = "onebot_group_bind"
 )

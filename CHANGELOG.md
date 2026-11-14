@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.6] - 2026-11-14
+
+### 新增
+
+- 支持用真实群号发消息：新增 `onebot_group_bind`(bot / qq_number / group_openid)，
+  `send_group_msg` 传真实群号时先查绑定表拿 openid；映射 id 仍然可用
+  （QQ 官方只给 openid，群号无法自动获取，需管理员手工绑定）
+
 ## [0.2.5] - 2026-11-14
 
 ### 变更

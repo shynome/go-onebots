@@ -6,10 +6,28 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/pocketbase/dbx"
+	"github.com/shynome/go-onebots/db"
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 )
+
+// groupOpenIDByNumber 用真实群号查 group_openid
+// QQ 官方 API 只给 openid 不提供群号, 只能靠管理员在 onebot_group_bind 里手工绑定
+func (c *BotContext) groupOpenIDByNumber(qqNumber int64) (string, error) {
+	recs, err := c.mgr.app.FindRecordsByFilter(db.TableGroupBind,
+		"bot = {:bot} && qq_number = {:num}", "", 1, 0,
+		dbx.Params{"bot": c.botID, "num": qqNumber})
+	if err != nil {
+		return "", err
+	}
+	if len(recs) == 0 {
+		return "", errors.New("未知的 group_id: " + itoa(qqNumber) +
+			", 既不是已有的映射 id, 也没有在 onebot_group_bind 里绑定该群号")
+	}
+	return recs[0].GetString("group_openid"), nil
+}
 
 type lookupParams struct {
 	UserID    int64 `json:"user_id"`
