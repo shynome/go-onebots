@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+
 	"net/http"
 	"sync"
 	"time"
@@ -57,7 +57,7 @@ func (c *Client) Events(ctx context.Context, intents Intent) <-chan Payload {
 				}
 				failures++
 				delay := backoffDelay(failures)
-				slog.Warn("qq 网关连接结束, 准备重连", "error", err, "delay", delay)
+				c.logger().Warn("qq 网关连接结束, 准备重连", "error", err, "delay", delay)
 				select {
 				case <-ctx.Done():
 					return
@@ -139,7 +139,7 @@ func (c *Client) runOnce(ctx context.Context, intents Intent, out chan<- Payload
 
 	sessionID, seq := c.session()
 	if sessionID == "" {
-		slog.Info("qq 网关 identify", "intents", intents)
+		c.logger().Info("qq 网关 identify", "intents", intents)
 		if err := write(map[string]any{
 			"op": OpIdentify,
 			"d": map[string]any{
@@ -161,7 +161,7 @@ func (c *Client) runOnce(ctx context.Context, intents Intent, out chan<- Payload
 		} else {
 			seq = 0
 		}
-		slog.Info("qq 网关 resume", "session", sessionID, "seq", seq)
+		c.logger().Info("qq 网关 resume", "session", sessionID, "seq", seq)
 		if err := write(map[string]any{
 			"op": OpResume,
 			"d": map[string]any{
@@ -210,7 +210,7 @@ func (c *Client) runOnce(ctx context.Context, intents Intent, out chan<- Payload
 				var ready ReadyData
 				if err := json.Unmarshal(p.Data, &ready); err == nil && ready.SessionID != "" {
 					c.saveSession(ready.SessionID)
-					slog.Info("qq 网关就绪", "bot", ready.User.Username, "openid", ready.User.ID)
+					c.logger().Info("qq 网关就绪", "bot", ready.User.Username, "openid", ready.User.ID)
 				}
 			}
 			select {

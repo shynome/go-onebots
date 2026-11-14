@@ -67,6 +67,7 @@ func (m *Manager) Get(botID string) *BotContext {
 		clients:   map[*wsClient]struct{}{},
 		outbox:    outbox.New(m.app),
 		deliverCh: make(chan string, 1024),
+		logger:    m.app.Logger(),
 	}
 	c.restore()
 	go c.deliverWorker()
@@ -106,6 +107,9 @@ type BotContext struct {
 	outbox *outbox.Store
 
 	deliverCh chan string
+
+	// logger 用 PocketBase 的日志, 会写入 _logs 表方便后台排查
+	logger *slog.Logger
 }
 
 type wsClient struct {
@@ -190,7 +194,7 @@ func (c *BotContext) self() (int64, string) {
 	}
 	n, err := c.ids.Num(idmap.KindSelf, u.ID)
 	if err != nil {
-		slog.Warn("分配机器人自身 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配机器人自身 id 失败", "bot", c.botID, "error", err)
 		return 0, ""
 	}
 	c.setSelf(n, u.Username, u.ID)
@@ -214,7 +218,7 @@ func (c *BotContext) addClientAndFlush(cl *wsClient) {
 		err := cl.writeRaw(ctx, p.data)
 		cancel()
 		if err != nil {
-			slog.Warn("补发事件失败, 剩余事件保留待下次补发", "bot", c.botID, "error", err)
+			c.logger.Warn("补发事件失败, 剩余事件保留待下次补发", "bot", c.botID, "error", err)
 			c.pending = append(pending[i:], c.pending...)
 			return
 		}
@@ -222,9 +226,9 @@ func (c *BotContext) addClientAndFlush(cl *wsClient) {
 	}
 
 	if err := c.log.MarkDelivered(ids); err != nil {
-		slog.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
+		c.logger.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
 	}
-	slog.Info("已补发离线期间的事件", "bot", c.botID, "count", len(ids))
+	c.logger.Info("已补发离线期间的事件", "bot", c.botID, "count", len(ids))
 }
 
 func (c *BotContext) delClient(cl *wsClient) {
@@ -249,14 +253,14 @@ func (c *BotContext) pushPendingLocked(id string, data []byte) {
 	if len(c.pending) > maxPending {
 		over := len(c.pending) - maxPending
 		c.pending = c.pending[over:]
-		slog.Warn("离线事件超出上限, 丢弃最旧的", "bot", c.botID, "dropped", over, "limit", maxPending)
+		c.logger.Warn("离线事件超出上限, 丢弃最旧的", "bot", c.botID, "dropped", over, "limit", maxPending)
 	}
 }
 
 func (c *BotContext) broadcast(ev wsEvent) {
 	data, err := json.Marshal(ev)
 	if err != nil {
-		slog.Warn("序列化事件失败", "bot", c.botID, "error", err)
+		c.logger.Warn("序列化事件失败", "bot", c.botID, "error", err)
 		return
 	}
 
@@ -271,7 +275,7 @@ func (c *BotContext) broadcast(ev wsEvent) {
 		Data:        data,
 	})
 	if err != nil {
-		slog.Warn("写入事件日志失败", "bot", c.botID, "error", err)
+		c.logger.Warn("写入事件日志失败", "bot", c.botID, "error", err)
 	}
 
 	c.clientsMu.Lock()
@@ -283,7 +287,7 @@ func (c *BotContext) broadcast(ev wsEvent) {
 		err := cl.writeRaw(ctx, data)
 		cancel()
 		if err != nil {
-			slog.Debug("推送事件失败", "bot", c.botID, "error", err)
+			c.logger.Debug("推送事件失败", "bot", c.botID, "error", err)
 			delete(c.clients, cl)
 			cl.conn.CloseNow()
 			continue
@@ -293,7 +297,7 @@ func (c *BotContext) broadcast(ev wsEvent) {
 
 	if delivered == 0 {
 		c.pushPendingLocked(id, data)
-		slog.Warn("没有 OneBot 客户端连接, 事件已缓存待补发",
+		c.logger.Warn("没有 OneBot 客户端连接, 事件已缓存待补发",
 			"bot", c.botID, "message_type", ev.MessageType,
 			"user_id", ev.UserID, "group_id", ev.GroupID, "pending", len(c.pending))
 		return
@@ -322,7 +326,7 @@ func (c *BotContext) deliverWorker() {
 			return
 		}
 		if err := c.log.MarkDelivered(batch); err != nil {
-			slog.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
+			c.logger.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
 		}
 		batch = batch[:0]
 	}
@@ -346,7 +350,7 @@ func (c *BotContext) restore() {
 	since := time.Now().Add(-pendingRetention)
 	entries, err := c.log.Undelivered(since, maxPending)
 	if err != nil {
-		slog.Warn("恢复未投递事件失败", "bot", c.botID, "error", err)
+		c.logger.Warn("恢复未投递事件失败", "bot", c.botID, "error", err)
 		return
 	}
 	now := time.Now()
@@ -354,7 +358,7 @@ func (c *BotContext) restore() {
 		c.pending = append(c.pending, pendingEvent{id: e.ID, data: e.Data, at: now})
 	}
 	if len(entries) > 0 {
-		slog.Info("恢复未投递事件", "bot", c.botID, "count", len(entries), "last_seq", c.seq)
+		c.logger.Info("恢复未投递事件", "bot", c.botID, "count", len(entries), "last_seq", c.seq)
 	}
 }
 
@@ -368,7 +372,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 	c := m.Get(botID)
 	selfNum, selfName := c.self()
 	if selfNum == 0 {
-		slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "机器人尚未就绪", "remote", e.Request.RemoteAddr)
+		m.app.Logger().Warn("onebot 连接被拒绝", "bot", botID, "reason", "机器人尚未就绪", "remote", e.Request.RemoteAddr)
 		writeJSONError(e, http.StatusServiceUnavailable, "机器人尚未就绪, 等待 QQ 网关连接成功后重试")
 		return nil
 	}
@@ -377,7 +381,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		slog.Warn("onebot ws 握手失败", "bot", botID, "error", err)
+		m.app.Logger().Warn("onebot ws 握手失败", "bot", botID, "error", err)
 		return nil
 	}
 	conn.SetReadLimit(4 << 20)
@@ -399,7 +403,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 		},
 		"app": handshakeExtra,
 	}); err != nil {
-		slog.Warn("发送握手包失败", "bot", botID, "error", err)
+		m.app.Logger().Warn("发送握手包失败", "bot", botID, "error", err)
 		return nil
 	}
 
@@ -426,7 +430,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 		}
 	}()
 
-	slog.Info("onebot 客户端已连接", "bot", botID, "self_id", selfNum)
+	m.app.Logger().Info("onebot 客户端已连接", "bot", botID, "self_id", selfNum)
 
 	// action 并发处理: 客户端(ZeroBot)本身就是并发发请求的, 靠 echo 匹配响应。
 	// 串行处理会让慢 action(如内网媒体转存)阻塞同一连接上的其它请求。
@@ -434,7 +438,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 	for {
 		var req actionRequest
 		if err := wsjson.Read(ctx, conn, &req); err != nil {
-			slog.Info("onebot 客户端断开", "bot", botID, "error", err)
+			m.app.Logger().Info("onebot 客户端断开", "bot", botID, "error", err)
 			return nil
 		}
 
@@ -449,7 +453,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 			resp := c.handleAction(ctx, req.Action, req.Params)
 			resp.Echo = req.Echo
 			if err := cl.writeJSON(ctx, resp); err != nil {
-				slog.Debug("写回 action 结果失败", "bot", botID, "action", req.Action, "error", err)
+				m.app.Logger().Debug("写回 action 结果失败", "bot", botID, "action", req.Action, "error", err)
 			}
 		}(req)
 	}
@@ -482,7 +486,7 @@ func (m *Manager) checkAuth(e *core.RequestEvent, botID string) (*core.Record, b
 
 	rec, err := m.app.FindRecordById(db.TableQQBots, botID)
 	if err != nil {
-		slog.Warn("onebot 请求被拒绝", "bot", botID, "reason", "机器人不存在", "remote", e.Request.RemoteAddr)
+		m.app.Logger().Warn("onebot 请求被拒绝", "bot", botID, "reason", "机器人不存在", "remote", e.Request.RemoteAddr)
 		writeJSONError(e, http.StatusNotFound, "机器人不存在")
 		return nil, false
 	}
@@ -493,7 +497,7 @@ func (m *Manager) checkAuth(e *core.RequestEvent, botID string) (*core.Record, b
 	}
 
 	if requestToken(e.Request) != token {
-		slog.Warn("onebot 请求被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
+		m.app.Logger().Warn("onebot 请求被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
 		e.Response.Header().Set("WWW-Authenticate", `Bearer realm="onebot"`)
 		writeJSONError(e, http.StatusUnauthorized, "token 无效")
 		return nil, false
@@ -615,7 +619,7 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 	}
 
 	out, skipped := c.buildOutbounds(segs, scene)
-	logSkipped(c.botID, skipped)
+	c.logSkipped(skipped)
 	if len(out) == 0 {
 		return failResponse(1400, "消息内容为空或只包含不支持的段")
 	}
@@ -646,16 +650,16 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 	// QQ 侧拒绝 @全体(无管理员权限 / 当日已达上限) 时, 去掉 at 重发一遍
 	if hasAtAll && atAllRejected(err) {
 		retryOut, retrySkipped := c.buildOutbounds(withoutAtAll(segs), "group")
-		logSkipped(c.botID, retrySkipped)
+		c.logSkipped(retrySkipped)
 		if len(retryOut) > 0 {
 			if res, rerr := c.sendOutbounds(ctx, b, "group", openid, retryOut); rerr == nil {
-				slog.Warn("去掉 @全体 后发送成功", "bot", c.botID, "group", openid, "error", err)
+				c.logger.Warn("去掉 @全体 后发送成功", "bot", c.botID, "group", openid, "error", err)
 				return okResponse(c.messageData("group", openid, res.ID))
 			}
 		}
 	}
 
-	slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
+	c.logger.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
 	return failResponse(1200, "发送失败: "+err.Error())
 }
 
@@ -705,7 +709,7 @@ func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, 
 	}
 	res, err := c.sendOutbounds(ctx, b, "private", openid, out)
 	if err != nil {
-		slog.Warn("发送单聊消息失败", "bot", c.botID, "user", openid, "error", err)
+		c.logger.Warn("发送单聊消息失败", "bot", c.botID, "user", openid, "error", err)
 		return failResponse(1200, "发送失败: "+err.Error())
 	}
 	return okResponse(c.messageData("private", openid, res.ID))
@@ -716,7 +720,7 @@ func (c *BotContext) messageData(scene, target, messageID string) map[string]any
 		"scene": scene, "target": target,
 	})
 	if err != nil {
-		slog.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
 		return map[string]any{"message_id": 0}
 	}
 	return map[string]any{"message_id": num}

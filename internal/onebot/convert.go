@@ -2,7 +2,6 @@ package onebot
 
 import (
 	"encoding/json"
-	"log/slog"
 	"path"
 	"regexp"
 	"strconv"
@@ -145,12 +144,12 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 	case qqbot.EventReady:
 		var ready qqbot.ReadyData
 		if err := json.Unmarshal(p.Data, &ready); err != nil {
-			slog.Warn("解析 READY 失败", "bot", c.botID, "error", err)
+			c.logger.Warn("解析 READY 失败", "bot", c.botID, "error", err)
 			return
 		}
 		num, err := c.ids.Num(idmap.KindSelf, ready.User.ID)
 		if err != nil {
-			slog.Warn("记录机器人自身 id 失败", "bot", c.botID, "error", err)
+			c.logger.Warn("记录机器人自身 id 失败", "bot", c.botID, "error", err)
 			return
 		}
 		c.setSelf(num, ready.User.Username, ready.User.ID)
@@ -168,24 +167,24 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 func (c *BotContext) handleC2C(data json.RawMessage) {
 	var msg qqbot.C2CMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		slog.Warn("解析单聊消息失败", "bot", c.botID, "error", err)
+		c.logger.Warn("解析单聊消息失败", "bot", c.botID, "error", err)
 		return
 	}
 	if !c.firstSeen(msg.ID) {
-		slog.Debug("跳过重复单聊消息", "bot", c.botID, "message_id", msg.ID)
+		c.logger.Debug("跳过重复单聊消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 
 	selfNum, _ := c.self()
 	if selfNum == 0 {
-		slog.Warn("机器人未就绪, 丢弃单聊消息", "bot", c.botID)
+		c.logger.Warn("机器人未就绪, 丢弃单聊消息", "bot", c.botID)
 		return
 	}
 
 	openid := msg.Author.OpenID()
 	userNum, err := c.ids.Num(idmap.KindUser, openid)
 	if err != nil {
-		slog.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
 		return
 	}
 	// 已填写真实 QQ 号时对外统一用真实号
@@ -196,7 +195,7 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		"scene": "private", "target": openid,
 	})
 	if err != nil {
-		slog.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
 		return
 	}
 
@@ -229,29 +228,29 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 	var msg qqbot.GroupATMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		slog.Warn("解析群消息失败", "bot", c.botID, "error", err)
+		c.logger.Warn("解析群消息失败", "bot", c.botID, "error", err)
 		return
 	}
 	if !c.firstSeen(msg.ID) {
-		slog.Debug("跳过重复群消息", "bot", c.botID, "message_id", msg.ID)
+		c.logger.Debug("跳过重复群消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 
 	selfNum, _ := c.self()
 	if selfNum == 0 {
-		slog.Warn("机器人未就绪, 丢弃群消息", "bot", c.botID)
+		c.logger.Warn("机器人未就绪, 丢弃群消息", "bot", c.botID)
 		return
 	}
 
 	openid := msg.Author.OpenID()
 	userNum, err := c.ids.Num(idmap.KindUser, openid)
 	if err != nil {
-		slog.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
 		return
 	}
 	groupNum, err := c.ids.Num(idmap.KindGroup, msg.GroupOpenID)
 	if err != nil {
-		slog.Warn("分配群 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配群 id 失败", "bot", c.botID, "error", err)
 		return
 	}
 	// 已填写的真实号码优先
@@ -263,7 +262,7 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 		"scene": "group", "target": msg.GroupOpenID,
 	})
 	if err != nil {
-		slog.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
+		c.logger.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
 		return
 	}
 

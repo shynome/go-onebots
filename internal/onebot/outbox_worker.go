@@ -2,7 +2,6 @@ package onebot
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -27,11 +26,11 @@ const (
 func (m *Manager) StartOutboxWorker() {
 	fn := func() {
 		if err := m.retryOutbox(); err != nil {
-			slog.Error("补发出站消息失败", "error", err)
+			m.app.Logger().Error("补发出站消息失败", "error", err)
 		}
 	}
 	if err := m.app.Cron().Add("onebot_outbox_retry", outboxCron, fn); err != nil {
-		slog.Error("注册出站补发任务失败", "error", err)
+		m.app.Logger().Error("注册出站补发任务失败", "error", err)
 	}
 }
 
@@ -69,8 +68,8 @@ func (m *Manager) retryOutboxOne(store *outbox.Store, rec *core.Record) {
 	c := m.Get(botID)
 	res, err := c.deliver(context.Background(), b, rec)
 	if err != nil {
-		slog.Warn("补发出站消息失败", "bot", botID, "record", rec.Id, "error", err)
+		m.app.Logger().Warn("补发出站消息失败", "bot", botID, "record", rec.Id, "error", err)
 		return
 	}
-	slog.Info("已补发积压的出站消息", "bot", botID, "record", rec.Id, "message_id", res.ID)
+	m.app.Logger().Info("已补发积压的出站消息", "bot", botID, "record", rec.Id, "message_id", res.ID)
 }

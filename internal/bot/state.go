@@ -3,7 +3,6 @@ package bot
 import (
 	"database/sql"
 	"errors"
-	"log/slog"
 	"sync"
 
 	"github.com/pocketbase/dbx"
@@ -42,7 +41,7 @@ func (s *wsStateStore) SaveSession(sessionID string, seq uint64) {
 
 	rec, err := s.recordLocked()
 	if err != nil || rec == nil {
-		slog.Warn("保存网关会话失败", "bot", s.botID, "error", err)
+		s.app.Logger().Warn("保存网关会话失败", "bot", s.botID, "error", err)
 		return
 	}
 	if rec.GetString("session_id") == sessionID && uint64(rec.GetFloat("seq")) == seq {
@@ -52,7 +51,7 @@ func (s *wsStateStore) SaveSession(sessionID string, seq uint64) {
 	rec.Set("session_id", sessionID)
 	rec.Set("seq", seq)
 	if err := s.app.Save(rec); err != nil {
-		slog.Warn("保存网关会话失败", "bot", s.botID, "error", err)
+		s.app.Logger().Warn("保存网关会话失败", "bot", s.botID, "error", err)
 	}
 }
 

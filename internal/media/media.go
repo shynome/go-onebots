@@ -4,7 +4,6 @@ package media
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -23,7 +22,7 @@ type Store struct {
 func New(app core.App) *Store {
 	s3, err := storage.New(app)
 	if err != nil {
-		slog.Warn("S3 不可用, 将不支持中转媒体(本地文件 / base64 / 内网 URL)", "reason", err)
+		app.Logger().Warn("S3 不可用, 将不支持中转媒体(本地文件 / base64 / 内网 URL)", "reason", err)
 		s3 = nil
 	}
 

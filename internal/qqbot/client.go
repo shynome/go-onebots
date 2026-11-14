@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -39,6 +40,8 @@ type Config struct {
 	Endpoint     string
 	HTTPClient   *http.Client
 	SessionStore SessionStore
+	// Logger 为空时退回 slog.Default()
+	Logger *slog.Logger
 }
 
 func (c Config) endpoint() string {
@@ -70,6 +73,14 @@ type Client struct {
 
 func New(cfg Config) *Client {
 	return &Client{cfg: cfg}
+}
+
+// logger 返回注入的 logger, 未注入时退回默认 logger
+func (c *Client) logger() *slog.Logger {
+	if c.cfg.Logger != nil {
+		return c.cfg.Logger
+	}
+	return slog.Default()
 }
 
 func (c *Client) AppID() string { return c.cfg.AppID }

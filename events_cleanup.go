@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log/slog"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -26,7 +25,7 @@ func initEventsCleanup(app core.App) {
 	cleanup := func() {
 		days := eventsRetentionDays(app)
 		if days <= 0 {
-			slog.Info("事件表清理已关闭", "retention_days", days)
+			app.Logger().Info("事件表清理已关闭", "retention_days", days)
 			return
 		}
 
@@ -36,16 +35,16 @@ func initEventsCleanup(app core.App) {
 			Bind(dbx.Params{"cutoff": cutoff}).
 			Execute()
 		if err != nil {
-			slog.Error("清理事件表失败", "error", err)
+			app.Logger().Error("清理事件表失败", "error", err)
 		} else if affected, _ := res.RowsAffected(); affected > 0 {
-			slog.Info("已清理过期事件", "deleted", affected, "retention_days", days)
+			app.Logger().Info("已清理过期事件", "deleted", affected, "retention_days", days)
 		}
 
 		cleanupMedia(app, days)
 	}
 
 	if err := app.Cron().Add("cleanup_onebot_events", eventsCleanupCron, cleanup); err != nil {
-		slog.Error("注册事件清理任务失败", "error", err)
+		app.Logger().Error("注册事件清理任务失败", "error", err)
 	}
 }
 
@@ -55,10 +54,10 @@ func cleanupMedia(app core.App, days int) {
 	cutoff := time.Now().AddDate(0, 0, -days)
 	deleted, err := store.Cleanup(cutoff, 200)
 	if err != nil {
-		slog.Error("清理中转媒体失败", "error", err, "deleted", deleted)
+		app.Logger().Error("清理中转媒体失败", "error", err, "deleted", deleted)
 		return
 	}
 	if deleted > 0 {
-		slog.Info("已清理过期媒体", "deleted", deleted, "retention_days", days)
+		app.Logger().Info("已清理过期媒体", "deleted", deleted, "retention_days", days)
 	}
 }

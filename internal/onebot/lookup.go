@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
@@ -243,7 +242,7 @@ func (c *BotContext) deleteMsg(ctx context.Context, b *bot.Bot, p lookupParams) 
 	}
 
 	if derr != nil {
-		slog.Warn("撤回消息失败", "bot", c.botID, "message_id", messageID, "error", derr)
+		c.logger.Warn("撤回消息失败", "bot", c.botID, "message_id", messageID, "error", derr)
 		return failResponse(1200, "撤回失败: "+derr.Error())
 	}
 	return okResponse(nil)

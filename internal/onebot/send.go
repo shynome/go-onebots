@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -263,7 +262,7 @@ func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) 
 		res, err := c.deliverOnce(ctx, b, rec)
 		if err == nil {
 			if serr := c.outbox.MarkSent(rec, res.ID); serr != nil {
-				slog.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", serr)
+				c.logger.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", serr)
 			}
 			c.recordSent(rec, res.ID)
 			return res, nil
@@ -272,15 +271,15 @@ func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) 
 
 		if !retryable(err) || attempt >= maxSendRetry {
 			if ferr := c.outbox.MarkFailed(rec, err.Error()); ferr != nil {
-				slog.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", ferr)
+				c.logger.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", ferr)
 			}
 			return last, err
 		}
 
 		delay := retryBackoff(attempt)
-		slog.Warn("发送失败, 准备重试", "bot", c.botID, "attempt", attempt+1, "delay", delay, "error", err)
+		c.logger.Warn("发送失败, 准备重试", "bot", c.botID, "attempt", attempt+1, "delay", delay, "error", err)
 		if rerr := c.outbox.RetryLater(rec, time.Now().Add(delay), err.Error()); rerr != nil {
-			slog.Warn("更新重试时间失败", "bot", c.botID, "record", rec.Id, "error", rerr)
+			c.logger.Warn("更新重试时间失败", "bot", c.botID, "record", rec.Id, "error", rerr)
 		}
 
 		select {
@@ -329,7 +328,7 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 		}
 		if m.url == "" {
 			if serr := c.outbox.SetMediaURL(rec, fileURL); serr != nil {
-				slog.Debug("缓存媒体 URL 失败", "bot", c.botID, "record", rec.Id, "error", serr)
+				c.logger.Debug("缓存媒体 URL 失败", "bot", c.botID, "record", rec.Id, "error", serr)
 			}
 		}
 		up, err := c.uploadMediaToQQ(ctx, b, scene, openid, qqbot.UploadRequest{
@@ -345,7 +344,7 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 
 	msgID, seq := c.reply.Next(scene, openid)
 	if msgID == "" {
-		slog.Warn("被动回复窗口已过期, 尝试发送主动消息",
+		c.logger.Warn("被动回复窗口已过期, 尝试发送主动消息",
 			"bot", c.botID, "scene", scene, "target", openid)
 	}
 	req.MsgID = msgID
@@ -390,7 +389,7 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 		"scene": scene, "target": openid,
 	})
 	if err != nil {
-		slog.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
+		c.logger.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
 		return
 	}
 
@@ -450,7 +449,7 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 		Data:        data,
 		Delivered:   true,
 	}); err != nil {
-		slog.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
+		c.logger.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
 	}
 }
 
@@ -611,8 +610,8 @@ func verifyMediaURL(ctx context.Context, url string) error {
 }
 
 // logSkipped 记录被忽略的消息段, 避免静默丢内容
-func logSkipped(botID string, skipped []string) {
+func (c *BotContext) logSkipped(skipped []string) {
 	if len(skipped) > 0 {
-		slog.Warn("跳过部分消息段", "bot", botID, "segments", skipped)
+		c.logger.Warn("跳过部分消息段", "segments", skipped)
 	}
 }

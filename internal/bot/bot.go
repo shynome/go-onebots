@@ -3,7 +3,6 @@ package bot
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -68,6 +67,7 @@ func Start(app core.App, record *core.Record) *Bot {
 			AppID:        record.GetString("app_id"),
 			AppSecret:    record.GetString("app_secret"),
 			SessionStore: newWSStateStore(app, record.Id),
+			Logger:       app.Logger(),
 		}),
 		done: make(chan struct{}),
 	}
@@ -152,7 +152,7 @@ func (b *Bot) tryLoadSelf() {
 
 	u, err := b.client.Me(ctx)
 	if err != nil {
-		slog.Warn("获取机器人自身信息失败", "bot", b.Record.Id, "error", err)
+		b.App.Logger().Warn("获取机器人自身信息失败", "bot", b.Record.Id, "error", err)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (b *Bot) tryLoadSelf() {
 	b.self = u
 	b.ready = true
 	b.selfMu.Unlock()
-	slog.Info("qq 机器人信息已补齐", "bot", b.Record.Id, "name", u.Username, "openid", u.ID)
+	b.App.Logger().Info("qq 机器人信息已补齐", "bot", b.Record.Id, "name", u.Username, "openid", u.ID)
 }
 
 // Subscribe 注册事件处理器
@@ -206,12 +206,12 @@ func (b *Bot) handle(p qqbot.Payload) {
 		}
 	case qqbot.EventResumed:
 		// resume 成功不会重发 READY, 这里补一次自身信息
-		slog.Info("qq 网关已恢复", "bot", b.Record.Id)
+		b.App.Logger().Info("qq 网关已恢复", "bot", b.Record.Id)
 		b.tryLoadSelf()
 	case qqbot.EventC2CMessageCreate, qqbot.EventGroupATMessageCreate, qqbot.EventGroupMessageCreate:
-		slog.Info("收到 QQ 消息", "bot", b.Record.Id, "event", p.Event, "data", string(p.Data))
+		b.App.Logger().Info("收到 QQ 消息", "bot", b.Record.Id, "event", p.Event, "data", string(p.Data))
 	default:
-		slog.Debug("忽略 QQ 事件", "bot", b.Record.Id, "event", p.Event)
+		b.App.Logger().Debug("忽略 QQ 事件", "bot", b.Record.Id, "event", p.Event)
 	}
 	b.dispatch(p)
 }
@@ -226,6 +226,6 @@ func (b *Bot) setStatus(status string) {
 		return tx.Save(r)
 	})
 	if err != nil {
-		slog.Warn("更新机器人状态失败", "bot", b.Record.Id, "status", status, "error", err)
+		b.App.Logger().Warn("更新机器人状态失败", "bot", b.Record.Id, "status", status, "error", err)
 	}
 }
