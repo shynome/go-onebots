@@ -53,7 +53,8 @@ func (c *Client) SendAtAll(ctx context.Context, groupNumber int64) error {
 		Action: "send_group_msg",
 		Params: zero.Params{
 			"group_id": groupNumber,
-			"message":  message.Message{message.AtAll(), message.Text(" ")},
+			// 只带 at 段: NapCat 对纯空白文本会报 flashTransferInfo
+			"message": message.Message{message.AtAll()},
 		},
 	})
 	if err != nil {

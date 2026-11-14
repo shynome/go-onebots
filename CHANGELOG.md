@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.10] - 2026-11-14
+
+### 修复
+
+- `@全体` 备用端只发 `at` 段，不再附带空白文本
+  - NapCat 对纯空白文本（`" "`）会报 `Cannot read properties of null
+    (reading 'flashTransferInfo')` 导致发送失败；纯 `at` 段实测正常
+
 ## [0.3.9] - 2026-11-14
 
 ### 变更
