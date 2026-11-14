@@ -520,6 +520,28 @@ func (c *BotContext) handleAction(ctx context.Context, action string, raw json.R
 			}
 		}
 		return c.sendMessage(ctx, b, action, p)
+	case "get_stranger_info", "get_group_member_info", "get_group_info", "delete_msg":
+		var p lookupParams
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return failResponse(1400, "参数解析失败: "+err.Error())
+			}
+		}
+		switch action {
+		case "get_stranger_info":
+			return c.getStrangerInfo(p)
+		case "get_group_member_info":
+			return c.getGroupMemberInfo(p)
+		case "get_group_info":
+			return c.getGroupInfo(p)
+		default:
+			return c.deleteMsg(ctx, b, p)
+		}
+	case "get_group_list":
+		return c.getGroupList()
+	case "get_friend_list", "get_group_member_list":
+		// 官方没有对应接口, 返回空数组避免插件报错
+		return okResponse([]any{})
 	default:
 		return failResponse(1404, "该 action 在 QQ 官方 API 下不支持: "+action)
 	}

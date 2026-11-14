@@ -15,7 +15,11 @@
 | OneBot action | 说明 |
 | --- | --- |
 | `get_login_info` | 返回机器人自身 id（映射后的 int64）与名称 |
-| `send_private_msg` / `send_group_msg` / `send_msg` | 纯文本，自动作为被动回复发送 |
+| `send_private_msg` / `send_group_msg` / `send_msg` | 文本与富媒体，自动作为被动回复发送 |
+| `delete_msg` | 撤回消息（QQ 官方限时约 2 分钟） |
+| `get_stranger_info` / `get_group_member_info` | 返回最后见到的昵称 / 群名片 / 角色快照 |
+| `get_group_info` / `get_group_list` | 从已见过的群生成，群名无法获取 |
+| `get_friend_list` / `get_group_member_list` | 官方无此接口，返回空数组 |
 | `get_status` / `get_version_info` | 本地返回 |
 
 **事件**：`C2C_MESSAGE_CREATE` → 私聊消息；`GROUP_AT_MESSAGE_CREATE` → 群 @ 消息；
@@ -35,8 +39,7 @@
 - 群聊只能收到 @ 机器人的消息，拿不到全量群消息
 - 私聊只能收到用户主动发起的会话
 - 拿不到群列表 / 群成员列表 / 群昵称
-- 满足不了的能力（发送图片 / 语音 / 视频 / 文件、频道相关、`delete_msg`、`get_msg` 等）
-  对应的 action 统一返回 `retcode=1404`
+- 满足不了的能力（频道相关、`get_msg` 等）对应的 action 统一返回 `retcode=1404`
 
 ## 快速开始
 

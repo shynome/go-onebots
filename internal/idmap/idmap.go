@@ -149,18 +149,47 @@ func (m *Map) rememberMsg(openid string, num int64) {
 	m.msgByNum[num] = openid
 }
 
-// SetExtra 更新映射的附加信息(昵称/头像/角色等), 内容未变化时不写库
+// SetExtra 合并更新映射的附加信息(昵称/头像/角色等)
+// 空字符串不覆盖已有值, 避免私聊消息把群名片冲掉
 func (m *Map) SetExtra(kind Kind, openid string, extra map[string]any) {
 	if openid == "" || extra == nil {
 		return
 	}
-	raw, err := json.Marshal(extra)
+
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableIDMap,
+		"bot = {:bot} && kind = {:kind} && openid = {:openid}",
+		dbx.Params{"bot": m.botID, "kind": string(kind), "openid": openid},
+	)
 	if err != nil {
 		return
 	}
-	key := openidKey{kind, openid}
+
+	var current map[string]any
+	_ = rec.UnmarshalJSONField("extra", &current)
+	if current == nil {
+		current = map[string]any{}
+	}
+
+	changed := false
+	for k, v := range extra {
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		current[k] = v
+		changed = true
+	}
+	if !changed {
+		return
+	}
+
+	raw, err := json.Marshal(current)
+	if err != nil {
+		return
+	}
 	s := string(raw)
 
+	key := openidKey{kind, openid}
 	m.mu.Lock()
 	if m.extra[key] == s {
 		m.mu.Unlock()
@@ -169,16 +198,7 @@ func (m *Map) SetExtra(kind Kind, openid string, extra map[string]any) {
 	m.extra[key] = s
 	m.mu.Unlock()
 
-	rec, err := m.app.FindFirstRecordByFilter(
-		db.TableIDMap,
-		"bot = {:bot} && kind = {:kind} && openid = {:openid}",
-		dbx.Params{"bot": m.botID, "kind": string(kind), "openid": openid},
-	)
-	if err != nil {
-		m.forgetExtra(key)
-		return
-	}
-	rec.Set("extra", extra)
+	rec.Set("extra", current)
 	if err := m.app.Save(rec); err != nil {
 		m.forgetExtra(key)
 	}
@@ -281,6 +301,68 @@ func (m *Map) OpenID(kind Kind, num int64) (string, error) {
 	openid := rec.GetString("openid")
 	m.remember(kind, openid, num)
 	return openid, nil
+}
+
+// NumExtra 由 int64 反查 openid 与 extra(昵称/名片/角色等)
+func (m *Map) NumExtra(kind Kind, num int64) (string, map[string]any, error) {
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableIDMap,
+		"bot = {:bot} && kind = {:kind} && num = {:num}",
+		dbx.Params{"bot": m.botID, "kind": string(kind), "num": num},
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, fmt.Errorf("找不到 %s 映射: %d", kind, num)
+		}
+		return "", nil, err
+	}
+
+	openid := rec.GetString("openid")
+	m.mu.Lock()
+	m.remember(kind, openid, num)
+	m.mu.Unlock()
+
+	var extra map[string]any
+	_ = rec.UnmarshalJSONField("extra", &extra)
+	return openid, extra, nil
+}
+
+// ListNums 列出某类型的全部 num(用于 get_group_list)
+func (m *Map) ListNums(kind Kind) ([]int64, error) {
+	recs, err := m.app.FindRecordsByFilter(
+		db.TableIDMap,
+		"bot = {:bot} && kind = {:kind}",
+		"num", 0, 0,
+		dbx.Params{"bot": m.botID, "kind": string(kind)},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	nums := make([]int64, 0, len(recs))
+	for _, rec := range recs {
+		nums = append(nums, int64(rec.GetFloat("num")))
+	}
+	return nums, nil
+}
+
+// MessageExtra 由消息 num 反查官方消息 id 与 extra(scene/target)
+func (m *Map) MessageExtra(num int64) (string, map[string]any, error) {
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableMessageMap,
+		"bot = {:bot} && num = {:num}",
+		dbx.Params{"bot": m.botID, "num": num},
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, fmt.Errorf("找不到消息映射: %d", num)
+		}
+		return "", nil, err
+	}
+
+	var extra map[string]any
+	_ = rec.UnmarshalJSONField("extra", &extra)
+	return rec.GetString("openid"), extra, nil
 }
 
 func (m *Map) remember(kind Kind, openid string, num int64) {
