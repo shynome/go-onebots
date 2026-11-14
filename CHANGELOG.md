@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.9] - 2026-11-14
+
+### 变更
+
+- `@全体` 备用端改用 ZeroBot 的 `driver.HTTPCaller` 调用，不再手写 HTTP 与响应解析
+  - 成功判定以 `status`（`ok` / `async`）为准，不再拿 `retcode` 当 HTTP 状态码；
+    部分实现成功时也返回 `retcode=200`，旧逻辑会误报失败
+  - 主模块新增 `github.com/wdvxdr1123/ZeroBot v1.8.2` 依赖
+
 ## [0.3.8] - 2026-11-14
 
 ### 新增

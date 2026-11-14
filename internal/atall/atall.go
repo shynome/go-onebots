@@ -4,14 +4,14 @@
 package atall
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
+
+	zero "github.com/wdvxdr1123/ZeroBot"
+	"github.com/wdvxdr1123/ZeroBot/driver"
+	"github.com/wdvxdr1123/ZeroBot/message"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/db"
@@ -20,10 +20,9 @@ import (
 // requestTimeout 备用端请求超时
 const requestTimeout = 10 * time.Second
 
-// Client 备用 OneBot 端的 HTTP 客户端
+// Client 备用 OneBot 端的 HTTP 调用器
 type Client struct {
-	baseURL string
-	token   string
+	caller *driver.HTTPCaller
 }
 
 // Load 按记录 id 取备用端配置, 未配置或地址为空时返回 nil
@@ -39,65 +38,31 @@ func Load(app core.App, id string) (*Client, error) {
 	if base == "" {
 		return nil, nil
 	}
-	return &Client{baseURL: base, token: strings.TrimSpace(rec.GetString("access_token"))}, nil
-}
-
-type segment struct {
-	Type string            `json:"type"`
-	Data map[string]string `json:"data"`
-}
-
-type sendParams struct {
-	GroupID int64     `json:"group_id"`
-	Message []segment `json:"message"`
+	return &Client{caller: &driver.HTTPCaller{
+		URL:         base,
+		AccessToken: strings.TrimSpace(rec.GetString("access_token")),
+	}}, nil
 }
 
 // SendAtAll 让备用端在该群发一条只含 @全体 的消息
 func (c *Client) SendAtAll(ctx context.Context, groupNumber int64) error {
-	raw, err := json.Marshal(sendParams{
-		GroupID: groupNumber,
-		Message: []segment{
-			{Type: "at", Data: map[string]string{"qq": "all"}},
-			{Type: "text", Data: map[string]string{"text": " "}},
-		},
-	})
-	if err != nil {
-		return err
-	}
-
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.baseURL+"/send_group_msg", bytes.NewReader(raw))
+	rsp, err := c.caller.CallAPI(reqCtx, zero.APIRequest{
+		Action: "send_group_msg",
+		Params: zero.Params{
+			"group_id": groupNumber,
+			"message":  message.Message{message.AtAll(), message.Text(" ")},
+		},
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("调用备用端失败: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("备用端返回 %d: %s", resp.StatusCode, body)
-	}
-
-	var res struct {
-		Status  string `json:"status"`
-		Retcode int    `json:"retcode"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &res); err != nil {
-		return fmt.Errorf("解析备用端响应失败: %w, body: %s", err, body)
-	}
-	if res.Retcode != 0 {
-		return fmt.Errorf("备用端返回失败: retcode=%d message=%s", res.Retcode, res.Message)
+	// OneBot 用 status 表示成败(ok / async / failed), retcode 只是错误码
+	if rsp.Status != "ok" && rsp.Status != "async" {
+		return fmt.Errorf("备用端返回失败: status=%s retcode=%d message=%s wording=%s",
+			rsp.Status, rsp.RetCode, rsp.Message, rsp.Wording)
 	}
 	return nil
 }
