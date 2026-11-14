@@ -43,6 +43,12 @@ func (m *Manager) ServeStdAction(e *core.RequestEvent) error {
 		writeJSONError(e, http.StatusBadRequest, "缺少 action")
 		return nil
 	}
+	// PocketBase 的根路由会把任意深度路径的首段当成 action 参数,
+	// 这里只接受真正的单段 action, 其它路径还回 404 语义
+	if p := strings.Trim(e.Request.URL.Path, "/"); strings.Contains(p, "/") {
+		writeJSONError(e, http.StatusNotFound, "请求路径不存在")
+		return nil
+	}
 
 	token := requestToken(e.Request)
 	botID, err := m.resolveBotByToken(token)

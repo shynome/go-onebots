@@ -10,6 +10,7 @@ import (
 func initBots(app core.App, mgr *onebot.Manager) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/onebot/v11/{botId}/ws", mgr.ServeWS)
+		e.Router.GET("/onebot/v11/{botId}/{action}", mgr.ServeHTTP)
 		e.Router.POST("/onebot/v11/{botId}/{action}", mgr.ServeHTTP)
 		// OneBot v11 标准 HTTP 接口: /:action, 支持 GET 与 POST
 		e.Router.GET("/{action}", mgr.ServeStdAction)
