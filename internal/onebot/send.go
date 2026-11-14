@@ -99,7 +99,8 @@ func parseCQString(s string) []Segment {
 
 // buildOutbounds 把消息段编排成若干条 QQ 消息
 // 一条 QQ 消息只能带一个媒体, 文本附在第一条媒体上
-func buildOutbounds(segs []Segment) (out []outbound, skipped []string) {
+// at 段会转成 content 里的 <@openid> / <@all> 标记
+func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outbound, skipped []string) {
 	var sb strings.Builder
 	var medias []mediaItem
 
@@ -107,6 +108,9 @@ func buildOutbounds(segs []Segment) (out []outbound, skipped []string) {
 		switch s.Type {
 		case "text":
 			sb.WriteString(s.Data["text"])
+		case "at":
+			// 实测 QQ 发送侧不识别 <@openid> / <@all>, 会原样显示, 因此跳过
+			skipped = append(skipped, "at(官方不支持发送)")
 		case "image", "record", "video", "file":
 			file := s.Data["file"]
 			if file == "" {

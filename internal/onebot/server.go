@@ -552,11 +552,6 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 	if err != nil {
 		return failResponse(1400, "message 解析失败: "+err.Error())
 	}
-	out, skipped := buildOutbounds(segs)
-	logSkipped(c.botID, skipped)
-	if len(out) == 0 {
-		return failResponse(1400, "消息内容为空或只包含不支持的段")
-	}
 
 	scene := p.MessageType
 	switch action {
@@ -574,6 +569,12 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 		}
 	}
 
+	out, skipped := c.buildOutbounds(segs, scene)
+	logSkipped(c.botID, skipped)
+	if len(out) == 0 {
+		return failResponse(1400, "消息内容为空或只包含不支持的段")
+	}
+
 	if scene == "group" {
 		return c.sendGroup(ctx, b, p.GroupID, out)
 	}
@@ -585,6 +586,7 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, o
 	if err != nil {
 		return failResponse(1400, "未知的 group_id: "+itoa(groupID)+", 需要先收到该群的消息才能发送")
 	}
+
 	res, err := c.sendOutbounds(ctx, b, "group", openid, out)
 	if err != nil {
 		slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)

@@ -47,18 +47,20 @@ func TestParseSegmentsArray(t *testing.T) {
 }
 
 func TestBuildOutbounds(t *testing.T) {
+	c := &BotContext{}
+
 	t.Run("纯文本", func(t *testing.T) {
-		out, _ := buildOutbounds([]Segment{textSegment("hello")})
+		out, _ := c.buildOutbounds([]Segment{textSegment("hello")}, "group")
 		if len(out) != 1 || out[0].media != nil || out[0].content != "hello" {
 			t.Fatalf("解析错误: %+v", out)
 		}
 	})
 
 	t.Run("文本加一张图", func(t *testing.T) {
-		out, _ := buildOutbounds([]Segment{
+		out, _ := c.buildOutbounds([]Segment{
 			textSegment("看图"),
 			{Type: "image", Data: map[string]string{"file": "u"}},
-		})
+		}, "group")
 		if len(out) != 1 {
 			t.Fatalf("应合并成 1 条, 实际 %d", len(out))
 		}
@@ -68,11 +70,11 @@ func TestBuildOutbounds(t *testing.T) {
 	})
 
 	t.Run("两张图拆两条", func(t *testing.T) {
-		out, _ := buildOutbounds([]Segment{
+		out, _ := c.buildOutbounds([]Segment{
 			textSegment("t"),
 			{Type: "image", Data: map[string]string{"file": "a"}},
 			{Type: "image", Data: map[string]string{"file": "b"}},
-		})
+		}, "group")
 		if len(out) != 2 {
 			t.Fatalf("应拆成 2 条, 实际 %d", len(out))
 		}
@@ -89,7 +91,7 @@ func TestBuildOutbounds(t *testing.T) {
 		for i := 0; i < 7; i++ {
 			segs = append(segs, Segment{Type: "image", Data: map[string]string{"file": "u"}})
 		}
-		out, skipped := buildOutbounds(segs)
+		out, skipped := c.buildOutbounds(segs, "group")
 		if len(out) != maxOutbounds {
 			t.Fatalf("应截断到 %d 条, 实际 %d", maxOutbounds, len(out))
 		}
@@ -99,15 +101,16 @@ func TestBuildOutbounds(t *testing.T) {
 	})
 
 	t.Run("忽略不支持的段", func(t *testing.T) {
-		out, skipped := buildOutbounds([]Segment{
-			{Type: "at", Data: map[string]string{"qq": "1"}},
+		c := &BotContext{}
+		out, skipped := c.buildOutbounds([]Segment{
+			{Type: "face", Data: map[string]string{"id": "1"}},
 			textSegment("hi"),
-		})
+		}, "group")
 		if len(out) != 1 || out[0].content != "hi" {
 			t.Fatalf("解析错误: %+v", out)
 		}
-		if len(skipped) != 1 || skipped[0] != "at" {
-			t.Fatalf("应记录 at 被跳过: %+v", skipped)
+		if len(skipped) != 1 || skipped[0] != "face" {
+			t.Fatalf("应记录 face 被跳过: %+v", skipped)
 		}
 	})
 }
