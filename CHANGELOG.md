@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.11] - 2026-11-14
+
+### 变更
+
+- 中转媒体（本地文件 / `base64://` / 内网 URL）**要求配置 S3**：未配置时直接返回
+  `未配置 S3, 不支持发送图片等中转媒体`，不再先报 `not an auth collection record`
+  这种难懂的错误（PocketBase 只允许 auth collection 签发文件访问 token）
+
 ## [0.2.10] - 2026-11-14
 
 ### 修复

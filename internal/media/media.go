@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -25,7 +23,7 @@ type Store struct {
 func New(app core.App) *Store {
 	s3, err := storage.New(app)
 	if err != nil {
-		slog.Debug("S3 不可用, 将回退到 PocketBase 文件链接", "reason", err)
+		slog.Warn("S3 不可用, 将不支持中转媒体(本地文件 / base64 / 内网 URL)", "reason", err)
 		s3 = nil
 	}
 
@@ -61,6 +59,10 @@ func (s *Store) SaveBytes(botID, kind, filename string, data []byte) (string, er
 }
 
 func (s *Store) save(botID, kind string, f *filesystem.File) (string, error) {
+	if s.s3 == nil {
+		return "", fmt.Errorf("未配置 S3, 不支持发送图片等中转媒体; 请改用公网可访问的 URL 或在 PocketBase 设置里配置 S3")
+	}
+
 	col, err := s.app.FindCachedCollectionByNameOrId(db.TableMedia)
 	if err != nil {
 		return "", err
@@ -87,26 +89,15 @@ func (s *Store) recordURL(rec *core.Record) (string, error) {
 	}
 
 	// PB 在 S3 中的对象 key 就是 {collectionId}/{recordId}/{filename}
-	if s.s3 != nil {
-		key := fmt.Sprintf("%s/%s/%s", rec.Collection().Id, rec.Id, name)
-		if u, err := s.s3.PresignGet(context.Background(), key, s.expiry); err == nil {
-			return u, nil
-		} else {
-			slog.Warn("生成 S3 预签名失败, 回退到 PB 文件链接", "error", err)
-		}
+	if s.s3 == nil {
+		return "", fmt.Errorf("未配置 S3, 无法生成中转媒体链接")
 	}
-
-	// 回退: file 字段是 protected 的, PB 文件链接需要附带 token
-	base := strings.TrimSuffix(s.app.Settings().Meta.AppURL, "/")
-	if base == "" {
-		return "", fmt.Errorf("无法生成中转链接: S3 不可用且未设置 Application URL")
-	}
-	token, err := rec.NewFileToken()
+	key := fmt.Sprintf("%s/%s/%s", rec.Collection().Id, rec.Id, name)
+	u, err := s.s3.PresignGet(context.Background(), key, s.expiry)
 	if err != nil {
-		return "", fmt.Errorf("生成文件访问 token 失败: %w", err)
+		return "", fmt.Errorf("生成 S3 预签名失败: %w", err)
 	}
-	return fmt.Sprintf("%s/api/files/%s/%s/%s?token=%s",
-		base, rec.Collection().Id, rec.Id, url.PathEscape(name), url.QueryEscape(token)), nil
+	return u, nil
 }
 
 // Cleanup 删除 cutoff 前的记录, 关联文件由 PocketBase 自动删除
