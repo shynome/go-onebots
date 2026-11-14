@@ -60,10 +60,14 @@ type User struct {
 
 // Author 消息发送者, 群聊与单聊字段名不同
 type Author struct {
-	ID           string `json:"id"`
-	UnionOpenID  string `json:"union_openid"`
-	UserOpenID   string `json:"user_openid"`
-	MemberOpenID string `json:"member_openid"`
+	ID             string `json:"id"`
+	UnionOpenID    string `json:"union_openid"`
+	UserOpenID     string `json:"user_openid"`
+	MemberOpenID   string `json:"member_openid"`
+	Username       string `json:"username"`        // 账号昵称
+	MemberNickname string `json:"member_nickname"` // 群昵称
+	MemberRole     string `json:"member_role"`     // owner / admin / member
+	Avatar         string `json:"avatar"`
 }
 
 func (a Author) OpenID() string {
@@ -76,21 +80,35 @@ func (a Author) OpenID() string {
 	return a.ID
 }
 
+// MessageAttachment 消息附件(图片/语音/视频/文件)
+type MessageAttachment struct {
+	URL          string `json:"url"`
+	Filename     string `json:"filename"`
+	Width        int64  `json:"width"`
+	Height       int64  `json:"height"`
+	Size         int64  `json:"size"`
+	ContentType  string `json:"content_type"` // image/jpeg / voice / video/mp4 / file
+	VoiceWavURL  string `json:"voice_wav_url"`
+	AsrReferText string `json:"asr_refer_text"`
+}
+
 // C2CMessage 单聊消息
 // https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/c2c_message_create.html
 type C2CMessage struct {
-	ID        string `json:"id"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp"`
-	Author    Author `json:"author"`
+	ID          string              `json:"id"`
+	Content     string              `json:"content"`
+	Timestamp   string              `json:"timestamp"`
+	Author      Author              `json:"author"`
+	Attachments []MessageAttachment `json:"attachments"`
 }
 
 // GroupATMessage 群 @ 机器人消息
 // https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html
 type GroupATMessage struct {
-	ID          string `json:"id"`
-	Content     string `json:"content"`
-	Timestamp   string `json:"timestamp"`
-	GroupOpenID string `json:"group_openid"`
-	Author      Author `json:"author"`
+	ID          string              `json:"id"`
+	Content     string              `json:"content"`
+	Timestamp   string              `json:"timestamp"`
+	GroupOpenID string              `json:"group_openid"`
+	Author      Author              `json:"author"`
+	Attachments []MessageAttachment `json:"attachments"`
 }

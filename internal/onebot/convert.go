@@ -3,6 +3,7 @@ package onebot
 import (
 	"encoding/json"
 	"log/slog"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,8 +55,89 @@ func eventTime(s string) int64 {
 	return time.Now().Unix()
 }
 
-func userNickname(num int64) string {
+func displayName(a qqbot.Author, num int64) string {
+	if a.Username != "" {
+		return a.Username
+	}
+	if a.MemberNickname != "" {
+		return a.MemberNickname
+	}
 	return "用户" + itoa(num)
+}
+
+// buildMessageSegments 把文本与附件拼成 OneBot 消息段
+// selfNum 非 0 时在首位插入 at 机器人段(群聊需要, ZeroBot 靠它判断 IsToMe)
+func buildMessageSegments(content string, atts []qqbot.MessageAttachment, selfNum int64) []Segment {
+	segs := make([]Segment, 0, len(atts)+2)
+	if selfNum != 0 {
+		segs = append(segs, atSegment(selfNum))
+	}
+	if content != "" {
+		segs = append(segs, textSegment(content))
+	}
+	for _, a := range atts {
+		seg, _ := attachmentSegment(a)
+		segs = append(segs, seg)
+	}
+	return segs
+}
+
+func buildRawMessage(content string, atts []qqbot.MessageAttachment, selfNum int64) string {
+	var sb strings.Builder
+	if selfNum != 0 {
+		sb.WriteString("[CQ:at,qq=" + itoa(selfNum) + "] ")
+	}
+	sb.WriteString(content)
+	for _, a := range atts {
+		_, cq := attachmentSegment(a)
+		sb.WriteString(cq)
+	}
+	return sb.String()
+}
+
+// QQ 在单聊里会以 content_type=file 下发图片/视频, 只能靠扩展名兜底判断
+func isImageFilename(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif":
+		return true
+	}
+	return false
+}
+
+func isVideoFilename(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".mp4", ".mov", ".m4v", ".avi", ".mkv":
+		return true
+	}
+	return false
+}
+
+// attachmentSegment 附件转 OneBot 消息段
+func attachmentSegment(a qqbot.MessageAttachment) (Segment, string) {
+	ct := strings.ToLower(a.ContentType)
+	name := a.Filename
+	if name == "" {
+		name = "attachment"
+	}
+
+	switch {
+	case strings.HasPrefix(ct, "image/") || (ct == "file" && isImageFilename(a.Filename)):
+		return Segment{Type: "image", Data: map[string]string{"file": a.URL, "url": a.URL}},
+			"[CQ:image,file=" + name + "]"
+	case ct == "voice" || strings.HasPrefix(ct, "audio/"):
+		url := a.VoiceWavURL
+		if url == "" {
+			url = a.URL
+		}
+		return Segment{Type: "record", Data: map[string]string{"file": url, "url": url}},
+			"[CQ:record,file=" + name + "]"
+	case strings.HasPrefix(ct, "video/") || (ct == "file" && isVideoFilename(a.Filename)):
+		return Segment{Type: "video", Data: map[string]string{"file": a.URL, "url": a.URL}},
+			"[CQ:video,file=" + name + "]"
+	default:
+		return Segment{Type: "file", Data: map[string]string{"file": a.URL, "url": a.URL, "name": a.Filename}},
+			"[CQ:file,name=" + name + "]"
+	}
 }
 
 func (c *BotContext) onPayload(p qqbot.Payload) {
@@ -106,8 +188,13 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		return
 	}
 
+	c.ids.SetExtra(idmap.KindUser, openid, map[string]any{
+		"nickname": msg.Author.Username,
+		"avatar":   msg.Author.Avatar,
+		"scene":    "private",
+	})
+
 	c.reply.Set("private", openid, msg.ID)
-	text := msg.Content
 
 	c.broadcast(wsEvent{
 		Time:        eventTime(msg.Timestamp),
@@ -117,9 +204,13 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		SubType:     "friend",
 		MessageID:   msgNum,
 		UserID:      userNum,
-		RawMessage:  text,
-		Sender:      &wsSender{UserID: userNum, Nickname: userNickname(userNum), Sex: "unknown"},
-		Message:     []Segment{textSegment(text)},
+		RawMessage:  buildRawMessage(msg.Content, msg.Attachments, 0),
+		Sender: &wsSender{
+			UserID:   userNum,
+			Nickname: displayName(msg.Author, userNum),
+			Sex:      "unknown",
+		},
+		Message: buildMessageSegments(msg.Content, msg.Attachments, 0),
 	})
 }
 
@@ -155,14 +246,20 @@ func (c *BotContext) handleGroup(data json.RawMessage) {
 		return
 	}
 
+	role := msg.Author.MemberRole
+	if role == "" {
+		role = "member"
+	}
+	c.ids.SetExtra(idmap.KindUser, openid, map[string]any{
+		"nickname": msg.Author.Username,
+		"card":     msg.Author.MemberNickname,
+		"role":     role,
+		"avatar":   msg.Author.Avatar,
+		"group":    msg.GroupOpenID,
+	})
+
 	c.reply.Set("group", msg.GroupOpenID, msg.ID)
 	text := StripMention(msg.Content)
-
-	// 群消息必须带 at 段, ZeroBot 靠它判断 IsToMe
-	segments := []Segment{atSegment(selfNum)}
-	if text != "" {
-		segments = append(segments, textSegment(text))
-	}
 
 	c.broadcast(wsEvent{
 		Time:        eventTime(msg.Timestamp),
@@ -173,9 +270,15 @@ func (c *BotContext) handleGroup(data json.RawMessage) {
 		MessageID:   msgNum,
 		UserID:      userNum,
 		GroupID:     groupNum,
-		RawMessage:  "[CQ:at,qq=" + itoa(selfNum) + "] " + text,
+		RawMessage:  buildRawMessage(text, msg.Attachments, selfNum),
 		Font:        0,
-		Sender:      &wsSender{UserID: userNum, Nickname: userNickname(userNum), Role: "member", Sex: "unknown"},
-		Message:     segments,
+		Sender: &wsSender{
+			UserID:   userNum,
+			Nickname: displayName(msg.Author, userNum),
+			Card:     msg.Author.MemberNickname,
+			Role:     role,
+			Sex:      "unknown",
+		},
+		Message: buildMessageSegments(text, msg.Attachments, selfNum),
 	})
 }

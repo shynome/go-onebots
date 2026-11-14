@@ -2,6 +2,7 @@ package idmap
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -41,6 +42,7 @@ type Map struct {
 	mu     sync.Mutex
 	byName map[openidKey]int64
 	byNum  map[numKey]string
+	extra  map[openidKey]string // 最近一次写入的 extra, 内容未变则跳过写库
 }
 
 func New(app core.App, botID string) *Map {
@@ -49,7 +51,49 @@ func New(app core.App, botID string) *Map {
 		botID:  botID,
 		byName: map[openidKey]int64{},
 		byNum:  map[numKey]string{},
+		extra:  map[openidKey]string{},
 	}
+}
+
+// SetExtra 更新映射的附加信息(昵称/头像/角色等), 内容未变化时不写库
+func (m *Map) SetExtra(kind Kind, openid string, extra map[string]any) {
+	if openid == "" || extra == nil {
+		return
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		return
+	}
+	key := openidKey{kind, openid}
+	s := string(raw)
+
+	m.mu.Lock()
+	if m.extra[key] == s {
+		m.mu.Unlock()
+		return
+	}
+	m.extra[key] = s
+	m.mu.Unlock()
+
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableIDMap,
+		"bot = {:bot} && kind = {:kind} && openid = {:openid}",
+		dbx.Params{"bot": m.botID, "kind": string(kind), "openid": openid},
+	)
+	if err != nil {
+		m.forgetExtra(key)
+		return
+	}
+	rec.Set("extra", extra)
+	if err := m.app.Save(rec); err != nil {
+		m.forgetExtra(key)
+	}
+}
+
+func (m *Map) forgetExtra(key openidKey) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.extra, key)
 }
 
 // Num 获取 openid 对应的 int64, 不存在则分配并持久化

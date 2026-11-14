@@ -61,14 +61,30 @@ ZeroBot 靠这个 `at` 段判断 `IsToMe`，否则群里所有命令都不触发
 
 ### 3.3 sender 字段
 
-QQ 官方不提供昵称/群名片：
+QQ 官方事件里自带 `username` / `member_nickname` / `member_role` / `avatar`：
 
 | 字段 | 取值 |
 | --- | --- |
-| `nickname` | `"用户" + num`（ZeroBot 日志与提示可读） |
-| `card` | 空 |
-| `role` | `member` |
+| `nickname` | `username` → 回退 `member_nickname` → 回退 `"用户"+num` |
+| `card` | 群聊取 `member_nickname`，私聊为空 |
+| `role` | 群聊取 `member_role`（`owner` / `admin` / `member`），空则填 `member` |
 | `user_id` | 映射后的 int64 |
+
+同时把昵称/头像/角色写入 `onebot_id_map.extra`，供后续查询类 API 使用。
+
+### 3.4 入站附件
+
+事件里的 `attachments` 会转成 OneBot 消息段：
+
+| 来源 | 消息段 |
+| --- | --- |
+| `content_type` 以 `image/` 开头 | `image` |
+| `content_type = file` 且扩展名是图片 | `image`（QQ 单聊实际就是这样下发的） |
+| `content_type = voice` / `audio/*` | `record`（优先 `voice_wav_url`） |
+| `content_type` 以 `video/` 开头，或 `file` + 视频扩展名 | `video` |
+| 其他 | `file` |
+
+附件 URL 是限时链接，插件需要即时下载。
 
 ## 四、Action 支持（MVP）
 
