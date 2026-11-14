@@ -2,9 +2,12 @@ package onebot
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 
 	"github.com/shynome/go-onebots/internal/bot"
+	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 )
 
@@ -12,6 +15,17 @@ type lookupParams struct {
 	UserID    int64 `json:"user_id"`
 	GroupID   int64 `json:"group_id"`
 	MessageID int64 `json:"message_id"`
+}
+
+// maxHistoryCount get_group_msg_history 单次返回上限
+const maxHistoryCount = 100
+
+// msgParams get_msg / get_group_msg_history 的入参
+type msgParams struct {
+	MessageID  int64 `json:"message_id"`
+	GroupID    int64 `json:"group_id"`
+	MessageSeq int64 `json:"message_seq"`
+	Count      int   `json:"count"`
 }
 
 func asString(v any) string {
@@ -37,6 +51,87 @@ func (c *BotContext) userProfile(kind idmap.Kind, num int64) (nickname, card, ro
 		role = "member"
 	}
 	return nickname, card, role
+}
+
+// messageView 把记录的事件转成 OneBot get_msg 风格的对象
+func messageView(ev wsEvent) map[string]any {
+	view := map[string]any{
+		"message_id":   ev.MessageID,
+		"real_id":      ev.MessageID,
+		"time":         ev.Time,
+		"message_type": ev.MessageType,
+		"sender":       ev.Sender,
+		"message":      ev.Message,
+		"raw_message":  ev.RawMessage,
+	}
+	if ev.GroupID != 0 {
+		view["group_id"] = ev.GroupID
+	}
+	if ev.UserID != 0 {
+		view["user_id"] = ev.UserID
+	}
+	return view
+}
+
+func decodeMessage(data []byte) (wsEvent, bool) {
+	var ev wsEvent
+	if err := json.Unmarshal(data, &ev); err != nil {
+		return ev, false
+	}
+	return ev, true
+}
+
+// getMsg 从事件日志里按 message_id 找回原消息
+// 只能查到保留期内的消息, 超过 logs.maxDays 会被清理
+func (c *BotContext) getMsg(p msgParams) actionResponse {
+	if p.MessageID == 0 {
+		return failResponse(1400, "message_id 不能为空")
+	}
+	if _, _, err := c.ids.MessageExtra(p.MessageID); err != nil {
+		return failResponse(1400, "未知的 message_id: "+itoa(p.MessageID))
+	}
+
+	data, err := c.log.MessageByID(p.MessageID)
+	if err != nil {
+		if errors.Is(err, eventlog.ErrNotFound) {
+			return failResponse(1400, "未找到该消息, 可能已超过保留期")
+		}
+		return failResponse(1200, "查询消息失败: "+err.Error())
+	}
+
+	ev, ok := decodeMessage(data)
+	if !ok {
+		return failResponse(1200, "解析消息失败")
+	}
+	return okResponse(messageView(ev))
+}
+
+// getGroupMsgHistory 返回群消息历史, 按时间升序
+func (c *BotContext) getGroupMsgHistory(p msgParams) actionResponse {
+	if p.GroupID == 0 {
+		return failResponse(1400, "group_id 不能为空")
+	}
+
+	count := p.Count
+	if count <= 0 {
+		count = 20
+	}
+	if count > maxHistoryCount {
+		count = maxHistoryCount
+	}
+
+	data, err := c.log.GroupHistory(p.GroupID, p.MessageSeq, count)
+	if err != nil {
+		return failResponse(1200, "查询群历史失败: "+err.Error())
+	}
+
+	msgs := make([]map[string]any, 0, len(data))
+	for _, d := range data {
+		if ev, ok := decodeMessage(d); ok {
+			msgs = append(msgs, messageView(ev))
+		}
+	}
+	return okResponse(map[string]any{"messages": msgs})
 }
 
 func (c *BotContext) getStrangerInfo(p lookupParams) actionResponse {

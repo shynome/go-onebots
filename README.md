@@ -19,6 +19,8 @@
 | `delete_msg` | 撤回消息（QQ 官方限时约 2 分钟） |
 | `get_stranger_info` / `get_group_member_info` | 返回最后见到的昵称 / 群名片 / 角色快照 |
 | `get_group_info` / `get_group_list` | 从已见过的群生成，群名无法获取 |
+| `get_msg` | 从事件缓存重建原消息（保留期内有效，含机器人自己发的） |
+| `get_group_msg_history` | 群消息历史，按时间升序，`count` 默认 20 / 上限 100 |
 | `get_friend_list` / `get_group_member_list` | 官方无此接口，返回空数组 |
 | `get_status` / `get_version_info` | 本地返回 |
 
@@ -32,7 +34,8 @@
 `delivered = false` 查到。
 
 **历史清理**：`onebot_events` 按 PocketBase 的 `Settings → Logs → Max days` 定期清理
-（每天 03:30），无需单独配置。
+（每天 03:30），无需单独配置。`get_msg` 与 `get_group_msg_history` 都基于这份缓存，
+超出保留期的消息查不到。
 
 **限制（QQ 官方 API 本身）**
 

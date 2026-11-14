@@ -544,6 +544,17 @@ func (c *BotContext) handleAction(ctx context.Context, action string, raw json.R
 		}
 	case "get_group_list":
 		return c.getGroupList()
+	case "get_msg", "get_group_msg_history":
+		var p msgParams
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return failResponse(1400, "参数解析失败: "+err.Error())
+			}
+		}
+		if action == "get_msg" {
+			return c.getMsg(p)
+		}
+		return c.getGroupMsgHistory(p)
 	case "get_friend_list", "get_group_member_list":
 		// 官方没有对应接口, 返回空数组避免插件报错
 		return okResponse([]any{})

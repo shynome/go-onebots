@@ -2,6 +2,7 @@
 package eventlog
 
 import (
+	"errors"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -9,6 +10,9 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/shynome/go-onebots/db"
 )
+
+// ErrNotFound 表示事件已被清理或从未记录
+var ErrNotFound = errors.New("事件不存在")
 
 type Log struct {
 	app   core.App
@@ -27,6 +31,9 @@ type Record struct {
 	MessageID   int64
 	Content     string
 	Data        []byte
+	// Delivered 为 true 时直接标记已投递, 不会再补发给客户端
+	// 机器人自己发出的消息用这个, 只作为历史记录存在
+	Delivered bool
 }
 
 type Entry struct {
@@ -59,7 +66,10 @@ func (l *Log) Append(rec Record) (string, error) {
 	r.Set("message_id", rec.MessageID)
 	r.Set("content", rec.Content)
 	r.Set("event", types.JSONRaw(rec.Data))
-	r.Set("delivered", false)
+	r.Set("delivered", rec.Delivered)
+	if rec.Delivered {
+		r.Set("delivered_at", types.NowDateTime())
+	}
 	if err := l.app.Save(r); err != nil {
 		return "", err
 	}
@@ -101,6 +111,46 @@ func eventData(rec *core.Record) []byte {
 		return v
 	}
 	return nil
+}
+
+// MessageByID 按 OneBot message_id 取事件 JSON, 用于 get_msg
+func (l *Log) MessageByID(messageID int64) ([]byte, error) {
+	recs, err := l.app.FindRecordsByFilter(db.TableEvents,
+		"bot = {:bot} && message_id = {:mid}",
+		"-seq", 1, 0,
+		dbx.Params{"bot": l.botID, "mid": messageID},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return nil, ErrNotFound
+	}
+	return eventData(recs[0]), nil
+}
+
+// GroupHistory 取群消息历史, before > 0 时只取 message_id 比它更旧的部分
+// 返回按 seq 升序(从旧到新), 符合 get_group_msg_history 的约定
+func (l *Log) GroupHistory(groupID int64, before int64, limit int) ([][]byte, error) {
+	filter := "bot = {:bot} && message_type = 'group' && group_id = {:gid}"
+	params := dbx.Params{"bot": l.botID, "gid": groupID}
+	if before > 0 {
+		filter += " && message_id < {:before}"
+		params["before"] = before
+	}
+
+	recs, err := l.app.FindRecordsByFilter(db.TableEvents, filter, "-seq", limit, 0, params)
+	if err != nil {
+		return nil, err
+	}
+
+	msgs := make([][]byte, 0, len(recs))
+	for i := len(recs) - 1; i >= 0; i-- {
+		if data := eventData(recs[i]); len(data) > 0 {
+			msgs = append(msgs, data)
+		}
+	}
+	return msgs, nil
 }
 
 // MarkDelivered 批量标记已投递

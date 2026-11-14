@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/shynome/go-onebots/internal/bot"
+	"github.com/shynome/go-onebots/internal/eventlog"
+	"github.com/shynome/go-onebots/internal/idmap"
 	"github.com/shynome/go-onebots/internal/media"
 	"github.com/shynome/go-onebots/internal/qqbot"
 )
@@ -207,9 +210,75 @@ func (c *BotContext) sendOutbounds(ctx context.Context, b *bot.Bot, scene, openi
 		if err != nil {
 			return last, err
 		}
+		c.recordSent(scene, openid, ob, res.ID)
 		last = res
 	}
 	return last, nil
+}
+
+// recordSent 把机器人自己发出的消息写进事件日志
+// 直接标记为已投递, 不会补发给客户端, 仅供 get_msg 与群历史查询使用
+func (c *BotContext) recordSent(scene, openid string, ob outbound, messageID string) {
+	if messageID == "" {
+		return
+	}
+
+	num, err := c.ids.MessageNum(messageID, map[string]any{
+		"scene": scene, "target": openid,
+	})
+	if err != nil {
+		slog.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
+		return
+	}
+
+	segs := make([]Segment, 0, 2)
+	if ob.content != "" {
+		segs = append(segs, textSegment(ob.content))
+	}
+	if ob.media != nil {
+		segs = append(segs, Segment{Type: ob.media.kind, Data: map[string]string{"file": ob.media.file}})
+	}
+
+	selfNum, selfName := c.self()
+	ev := wsEvent{
+		Time:        time.Now().Unix(),
+		SelfID:      selfNum,
+		PostType:    "message_sent",
+		MessageType: scene,
+		SubType:     "normal",
+		MessageID:   num,
+		RawMessage:  rawFromSegments(segs),
+		Sender:      &wsSender{UserID: selfNum, Nickname: selfName, Role: "member", Sex: "unknown"},
+		Message:     segs,
+	}
+
+	var userNum int64
+	if scene == "group" {
+		if n, err := c.ids.Num(idmap.KindGroup, openid); err == nil {
+			ev.GroupID = n
+		}
+	} else if n, err := c.ids.Num(idmap.KindUser, openid); err == nil {
+		userNum = n
+		ev.UserID = n
+	}
+
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	seq := atomic.AddInt64(&c.seq, 1)
+	if _, err := c.log.Append(eventlog.Record{
+		Seq:         seq,
+		MessageType: scene,
+		UserID:      userNum,
+		GroupID:     ev.GroupID,
+		MessageID:   num,
+		Content:     ev.RawMessage,
+		Data:        data,
+		Delivered:   true,
+	}); err != nil {
+		slog.Warn("记录发出的消息失败", "bot", c.botID, "error", err)
+	}
 }
 
 func (c *BotContext) uploadMediaToQQ(ctx context.Context, b *bot.Bot, scene, openid string, req qqbot.UploadRequest) (qqbot.UploadResult, error) {
