@@ -20,6 +20,11 @@
 
 **事件**：`C2C_MESSAGE_CREATE` → 私聊消息；`GROUP_AT_MESSAGE_CREATE` → 群消息。
 
+**消息缓存**：所有入站事件都会写进 `onebot_events`。客户端掉线期间到达的消息会在
+重连后自动补发（保留 30 分钟 / 最多 2000 条），服务重启也会从库里恢复未投递事件。
+超出 QQ 被动回复窗口（5 分钟）的消息补发后插件可能发不出回复，但可以在后台按
+`delivered = false` 查到。
+
 **限制（QQ 官方 API 本身）**
 
 - 群聊只能收到 @ 机器人的消息，拿不到全量群消息
@@ -92,6 +97,7 @@ bots.go                  机器人生命周期 hook + OneBot 路由挂载
 db/                      表结构常量与 migration
 internal/qqbot/          QQ 官方 SDK（token / 网关 / 心跳 / 发消息）
 internal/idmap/          openid <-> int64 映射（PocketBase 持久化）
+internal/eventlog/       事件日志与未投递查询（离线补发）
 internal/bot/            机器人运行时（连接、状态、事件分发）
 internal/onebot/         OneBot v11 协议层（握手、事件转换、action 分发）
 cmd/obtest/              OneBot 冒烟测试客户端

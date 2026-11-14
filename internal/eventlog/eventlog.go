@@ -1,0 +1,126 @@
+// Package eventlog 把入站 OneBot 事件写进 PocketBase, 供离线补发与后台排查
+package eventlog
+
+import (
+	"time"
+
+	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/shynome/go-onebots/db"
+)
+
+type Log struct {
+	app   core.App
+	botID string
+}
+
+func New(app core.App, botID string) *Log {
+	return &Log{app: app, botID: botID}
+}
+
+type Record struct {
+	Seq         int64
+	MessageType string
+	UserID      int64
+	GroupID     int64
+	MessageID   int64
+	Content     string
+	Data        []byte
+}
+
+type Entry struct {
+	ID   string
+	Data []byte
+}
+
+// LastSeq 返回已记录的最大序号, 用于重启后继续递增
+func (l *Log) LastSeq() int64 {
+	recs, err := l.app.FindRecordsByFilter(db.TableEvents, "bot = {:bot}", "-seq", 1, 0,
+		dbx.Params{"bot": l.botID})
+	if err != nil || len(recs) == 0 {
+		return 0
+	}
+	return int64(recs[0].GetFloat("seq"))
+}
+
+// Append 追加一条事件记录
+func (l *Log) Append(rec Record) (string, error) {
+	col, err := l.app.FindCachedCollectionByNameOrId(db.TableEvents)
+	if err != nil {
+		return "", err
+	}
+	r := core.NewRecord(col)
+	r.Set("bot", l.botID)
+	r.Set("seq", rec.Seq)
+	r.Set("message_type", rec.MessageType)
+	r.Set("user_id", rec.UserID)
+	r.Set("group_id", rec.GroupID)
+	r.Set("message_id", rec.MessageID)
+	r.Set("content", rec.Content)
+	r.Set("event", types.JSONRaw(rec.Data))
+	r.Set("delivered", false)
+	if err := l.app.Save(r); err != nil {
+		return "", err
+	}
+	return r.Id, nil
+}
+
+// Undelivered 取出 since 之后且尚未投递的事件, 按 seq 升序
+func (l *Log) Undelivered(since time.Time, limit int) ([]Entry, error) {
+	recs, err := l.app.FindRecordsByFilter(db.TableEvents,
+		"bot = {:bot} && delivered = false && created >= {:since}",
+		"seq", limit, 0,
+		dbx.Params{
+			"bot":   l.botID,
+			"since": since.UTC().Format("2006-01-02 15:04:05.000Z"),
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]Entry, 0, len(recs))
+	for _, rec := range recs {
+		data := eventData(rec)
+		if len(data) == 0 {
+			continue
+		}
+		entries = append(entries, Entry{ID: rec.Id, Data: data})
+	}
+	return entries, nil
+}
+
+func eventData(rec *core.Record) []byte {
+	switch v := rec.Get("event").(type) {
+	case types.JSONRaw:
+		return []byte(v)
+	case string:
+		return []byte(v)
+	case []byte:
+		return v
+	}
+	return nil
+}
+
+// MarkDelivered 批量标记已投递
+func (l *Log) MarkDelivered(ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return l.app.RunInTransaction(func(tx core.App) error {
+		now := types.NowDateTime()
+		for _, id := range ids {
+			rec, err := tx.FindRecordById(db.TableEvents, id)
+			if err != nil {
+				continue
+			}
+			rec.Set("delivered", true)
+			rec.Set("delivered_at", now)
+			if err := tx.Save(rec); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

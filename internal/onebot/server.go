@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -14,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/db"
 	"github.com/shynome/go-onebots/internal/bot"
+	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 	"github.com/shynome/go-onebots/internal/qqbot"
 )
@@ -25,6 +27,10 @@ const (
 	pingInterval   = 30 * time.Second
 	writeTimeout   = 10 * time.Second
 	handshakeExtra = "go-onebots"
+	// pendingRetention 离线补发窗口, 超过该时长的消息被动回复已失效, 补发无意义
+	pendingRetention = 30 * time.Minute
+	// maxPending 离线队列上限, 超出丢弃最旧的
+	maxPending = 2000
 )
 
 type Manager struct {
@@ -45,15 +51,25 @@ func (m *Manager) Get(botID string) *BotContext {
 		return c
 	}
 	c := &BotContext{
-		mgr:     m,
-		botID:   botID,
-		ids:     idmap.New(m.app, botID),
-		reply:   newReplyCtx(),
-		clients: map[*wsClient]struct{}{},
+		mgr:       m,
+		botID:     botID,
+		ids:       idmap.New(m.app, botID),
+		reply:     newReplyCtx(),
+		log:       eventlog.New(m.app, botID),
+		clients:   map[*wsClient]struct{}{},
+		deliverCh: make(chan string, 1024),
 	}
+	c.restore()
+	go c.deliverWorker()
 	m.ctxs[botID] = c
 	bot.Subscribe(botID, c.onPayload)
 	return c
+}
+
+type pendingEvent struct {
+	id   string
+	data []byte
+	at   time.Time
 }
 
 type BotContext struct {
@@ -61,13 +77,19 @@ type BotContext struct {
 	botID string
 	ids   *idmap.Map
 	reply *replyCtx
+	log   *eventlog.Log
+
+	seq int64 // 事件序号, 原子递增
 
 	selfMu   sync.RWMutex
 	selfNum  int64
 	selfName string
 
-	clientsMu sync.RWMutex
+	clientsMu sync.Mutex
 	clients   map[*wsClient]struct{}
+	pending   []pendingEvent
+
+	deliverCh chan string
 }
 
 type wsClient struct {
@@ -124,16 +146,60 @@ func (c *BotContext) self() (int64, string) {
 	return n, u.Username
 }
 
-func (c *BotContext) addClient(cl *wsClient) {
+func (c *BotContext) addClientAndFlush(cl *wsClient) {
 	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
 	c.clients[cl] = struct{}{}
+	pending := c.pending
+	c.pending = nil
+	defer c.clientsMu.Unlock()
+
+	if len(pending) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(pending))
+	for i, p := range pending {
+		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+		err := cl.writeRaw(ctx, p.data)
+		cancel()
+		if err != nil {
+			slog.Warn("补发事件失败, 剩余事件保留待下次补发", "bot", c.botID, "error", err)
+			c.pending = append(pending[i:], c.pending...)
+			return
+		}
+		ids = append(ids, p.id)
+	}
+
+	if err := c.log.MarkDelivered(ids); err != nil {
+		slog.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
+	}
+	slog.Info("已补发离线期间的事件", "bot", c.botID, "count", len(ids))
 }
 
 func (c *BotContext) delClient(cl *wsClient) {
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
 	delete(c.clients, cl)
+}
+
+// pushPendingLocked 调用方必须持有 clientsMu
+func (c *BotContext) pushPendingLocked(id string, data []byte) {
+	now := time.Now()
+	cut := now.Add(-pendingRetention)
+	drop := 0
+	for drop < len(c.pending) && c.pending[drop].at.Before(cut) {
+		drop++
+	}
+	if drop > 0 {
+		c.pending = c.pending[drop:]
+	}
+
+	c.pending = append(c.pending, pendingEvent{id: id, data: data, at: now})
+	if len(c.pending) > maxPending {
+		over := len(c.pending) - maxPending
+		c.pending = c.pending[over:]
+		slog.Warn("离线事件超出上限, 丢弃最旧的", "bot", c.botID, "dropped", over, "limit", maxPending)
+	}
 }
 
 func (c *BotContext) broadcast(ev wsEvent) {
@@ -143,22 +209,101 @@ func (c *BotContext) broadcast(ev wsEvent) {
 		return
 	}
 
-	c.clientsMu.RLock()
-	clients := make([]*wsClient, 0, len(c.clients))
-	for cl := range c.clients {
-		clients = append(clients, cl)
+	seq := atomic.AddInt64(&c.seq, 1)
+	id, err := c.log.Append(eventlog.Record{
+		Seq:         seq,
+		MessageType: ev.MessageType,
+		UserID:      ev.UserID,
+		GroupID:     ev.GroupID,
+		MessageID:   ev.MessageID,
+		Content:     ev.RawMessage,
+		Data:        data,
+	})
+	if err != nil {
+		slog.Warn("写入事件日志失败", "bot", c.botID, "error", err)
 	}
-	c.clientsMu.RUnlock()
 
-	for _, cl := range clients {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+
+	delivered := 0
+	for cl := range c.clients {
 		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 		err := cl.writeRaw(ctx, data)
 		cancel()
 		if err != nil {
 			slog.Debug("推送事件失败", "bot", c.botID, "error", err)
-			c.delClient(cl)
+			delete(c.clients, cl)
 			cl.conn.CloseNow()
+			continue
 		}
+		delivered++
+	}
+
+	if delivered == 0 {
+		c.pushPendingLocked(id, data)
+		slog.Warn("没有 OneBot 客户端连接, 事件已缓存待补发",
+			"bot", c.botID, "message_type", ev.MessageType,
+			"user_id", ev.UserID, "group_id", ev.GroupID, "pending", len(c.pending))
+		return
+	}
+	c.markDelivered(id)
+}
+
+func (c *BotContext) markDelivered(id string) {
+	if id == "" {
+		return
+	}
+	select {
+	case c.deliverCh <- id:
+	default:
+		go func() { _ = c.log.MarkDelivered([]string{id}) }()
+	}
+}
+
+func (c *BotContext) deliverWorker() {
+	batch := make([]string, 0, 64)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := c.log.MarkDelivered(batch); err != nil {
+			slog.Warn("标记事件已投递失败", "bot", c.botID, "error", err)
+		}
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case id := <-c.deliverCh:
+			batch = append(batch, id)
+			if len(batch) >= 100 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+// restore 从 PocketBase 恢复序号与未投递事件
+func (c *BotContext) restore() {
+	c.seq = c.log.LastSeq()
+	since := time.Now().Add(-pendingRetention)
+	entries, err := c.log.Undelivered(since, maxPending)
+	if err != nil {
+		slog.Warn("恢复未投递事件失败", "bot", c.botID, "error", err)
+		return
+	}
+	now := time.Now()
+	for _, e := range entries {
+		c.pending = append(c.pending, pendingEvent{id: e.ID, data: e.Data, at: now})
+	}
+	if len(entries) > 0 {
+		slog.Info("恢复未投递事件", "bot", c.botID, "count", len(entries), "last_seq", c.seq)
 	}
 }
 
@@ -172,6 +317,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 
 	rec, err := m.app.FindRecordById(db.TableQQBots, botID)
 	if err != nil {
+		slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "机器人不存在", "remote", e.Request.RemoteAddr)
 		writeJSONError(e, http.StatusNotFound, "机器人不存在")
 		return nil
 	}
@@ -179,6 +325,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 	if token := rec.GetString("onebot_token"); token != "" {
 		auth := strings.TrimPrefix(e.Request.Header.Get("Authorization"), "Bearer ")
 		if auth != token {
+			slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
 			e.Response.Header().Set("WWW-Authenticate", `Bearer realm="onebot"`)
 			writeJSONError(e, http.StatusUnauthorized, "token 无效")
 			return nil
@@ -188,6 +335,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 	c := m.Get(botID)
 	selfNum, selfName := c.self()
 	if selfNum == 0 {
+		slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "机器人尚未就绪", "remote", e.Request.RemoteAddr)
 		writeJSONError(e, http.StatusServiceUnavailable, "机器人尚未就绪, 等待 QQ 网关连接成功后重试")
 		return nil
 	}
@@ -222,7 +370,7 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 		return nil
 	}
 
-	c.addClient(cl)
+	c.addClientAndFlush(cl)
 	defer c.delClient(cl)
 
 	go func() {

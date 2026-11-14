@@ -158,6 +158,41 @@ MVP 只发送纯文本：
 
 索引：`(bot, kind, openid)` 唯一，`(bot, kind, num)` 唯一。
 
+### 6.3 `onebot_events`（事件日志 / 离线补发）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| bot | relation → qq_bots | 所属机器人 |
+| seq | number(int) | 每机器人单调递增的事件序号 |
+| message_type | select | `private` / `group` |
+| user_id / group_id / message_id | number(int) | 映射后的 OneBot id |
+| content | text | 纯文本内容，便于后台阅读 |
+| event | json | 完整的 OneBot v11 事件，用于补发 |
+| delivered | bool | 是否已投递给 OneBot 客户端 |
+| delivered_at | date | 投递时间 |
+
+索引：`(bot, seq)` 唯一，`(bot, delivered)` 普通索引。
+
+## 六点五、消息不丢失策略
+
+OneBot v11 没有 ACK / 游标，服务端无法知道客户端处理到哪一条，所以只做「**离线期间补发**」，
+不做全量重放（重放会导致插件重复回复）。
+
+| 场景 | 行为 |
+| --- | --- |
+| 有客户端在线 | 直接推送，同时写 `onebot_events`，200ms 内批量标记 `delivered=true` |
+| 没有客户端在线 | 事件写入 `onebot_events`（`delivered=false`），并进入内存待补发队列 |
+| 客户端重连 | 握手成功后按 `seq` 升序补发队列，成功后批量标记 `delivered=true` |
+| 服务重启 | 启动时从 `onebot_events` 恢复 `delivered=false` 且 30 分钟内的事件到队列 |
+| 队列上限 | 30 分钟 / 2000 条，超出丢弃最旧的并告警 |
+
+**已知边界**
+
+- 超过 5 分钟后补发的消息，QQ 被动回复窗口已过，插件即使处理也发不出回复（会尝试主动消息并失败）
+- 崩溃瞬间正在处理的那一条可能「已投递未处理」
+- 连接假死时（TCP 半开）要等 30s ping 超时才判定断开，这期间的事件会发给黑洞
+- 后台可用过滤 `delivered = false` 查看漏掉的消息，人工补位
+
 ## 七、目录结构
 
 ```
@@ -172,6 +207,7 @@ go-onebots/
 │   ├── message.go               # 发文本、被动回复
 │   └── event.go                 # 事件结构体
 ├── internal/idmap/idmap.go      # openid ↔ int64
+├── internal/eventlog/           # 事件日志与未投递查询
 ├── internal/onebot/
 │   ├── server.go                # WS 挂载、握手、广播
 │   ├── action.go                # action 路由
