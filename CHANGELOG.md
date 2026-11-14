@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.8] - 2026-11-14
+
+### 新增
+
+- `onebot_id_map` 与 `onebot_at_fallback` 增加 `name` 备注字段，便于在后台识别
+  是哪个群 / 哪个人 / 哪个备用实例
+  - 同时把字段顺序理顺：`name` 紧跟 `kind`，`at_fallback` 移到 `qq_number` 之后，
+    备用端表的 `name` 放在最前
+
 ## [0.3.7] - 2026-11-14
 
 ### 新增
