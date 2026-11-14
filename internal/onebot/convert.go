@@ -250,6 +250,10 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 		slog.Warn("分配群 id 失败", "bot", c.botID, "error", err)
 		return
 	}
+	// 已绑定真实群号的群, 对外统一用群号
+	if qq, ok := c.groupBinds()[msg.GroupOpenID]; ok {
+		groupNum = qq
+	}
 	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
 		"scene": "group", "target": msg.GroupOpenID,
 	})

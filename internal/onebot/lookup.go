@@ -13,6 +13,20 @@ import (
 	"github.com/shynome/go-onebots/internal/idmap"
 )
 
+// groupBinds 返回 openid -> 真实群号 的绑定关系
+func (c *BotContext) groupBinds() map[string]int64 {
+	recs, err := c.mgr.app.FindRecordsByFilter(db.TableGroupBind,
+		"bot = {:bot}", "", 0, 0, dbx.Params{"bot": c.botID})
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]int64, len(recs))
+	for _, rec := range recs {
+		m[rec.GetString("group_openid")] = int64(rec.GetFloat("qq_number"))
+	}
+	return m
+}
+
 // groupOpenIDByNumber 用真实群号查 group_openid
 // QQ 官方 API 只给 openid 不提供群号, 只能靠管理员在 onebot_group_bind 里手工绑定
 func (c *BotContext) groupOpenIDByNumber(qqNumber int64) (string, error) {
@@ -179,7 +193,10 @@ func (c *BotContext) getGroupMemberInfo(p lookupParams) actionResponse {
 
 func (c *BotContext) getGroupInfo(p lookupParams) actionResponse {
 	if _, _, err := c.ids.NumExtra(idmap.KindGroup, p.GroupID); err != nil {
-		return failResponse(1400, "未知的 group_id: "+itoa(p.GroupID)+", 需要先收到该群的消息")
+		// 也允许传绑定的真实群号
+		if _, berr := c.groupOpenIDByNumber(p.GroupID); berr != nil {
+			return failResponse(1400, "未知的 group_id: "+itoa(p.GroupID)+", 需要先收到该群的消息")
+		}
 	}
 	// 官方没有群信息接口, 群名无法获取
 	return okResponse(map[string]any{
@@ -196,9 +213,17 @@ func (c *BotContext) getGroupList() actionResponse {
 		return failResponse(1200, "读取群列表失败: "+err.Error())
 	}
 
+	binds := c.groupBinds()
 	list := make([]map[string]any, 0, len(nums))
 	for _, n := range nums {
-		list = append(list, map[string]any{"group_id": n, "group_name": ""})
+		gid := n
+		if openid, _, err := c.ids.NumExtra(idmap.KindGroup, n); err == nil {
+			// 已绑定真实群号的群对外统一用群号
+			if qq, ok := binds[openid]; ok {
+				gid = qq
+			}
+		}
+		list = append(list, map[string]any{"group_id": gid, "group_name": ""})
 	}
 	return okResponse(list)
 }
