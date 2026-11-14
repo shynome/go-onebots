@@ -495,11 +495,7 @@ func (m *Manager) checkAuth(e *core.RequestEvent, botID string) (*core.Record, b
 		return rec, true
 	}
 
-	auth := strings.TrimPrefix(e.Request.Header.Get("Authorization"), "Bearer ")
-	if auth == "" {
-		auth = e.Request.URL.Query().Get("access_token")
-	}
-	if auth != token {
+	if requestToken(e.Request) != token {
 		slog.Warn("onebot 请求被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
 		e.Response.Header().Set("WWW-Authenticate", `Bearer realm="onebot"`)
 		writeJSONError(e, http.StatusUnauthorized, "token 无效")
@@ -595,7 +591,7 @@ func (c *BotContext) handleAction(ctx context.Context, action string, raw json.R
 		// 官方没有对应接口, 返回空数组避免插件报错
 		return okResponse([]any{})
 	default:
-		return failResponse(1404, "该 action 在 QQ 官方 API 下不支持: "+action)
+		return failResponse(retcodeUnsupported, "该 action 在 QQ 官方 API 下不支持: "+action)
 	}
 }
 

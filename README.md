@@ -85,21 +85,40 @@ ws://<host>:8090/onebot/v11/<botId>/ws
 
 ### HTTP API
 
-除正向 WebSocket 外，也提供 OneBot v11 的 HTTP action 接口，与 WS 共用同一套实现：
+除正向 WebSocket 外，也实现 OneBot v11 标准的 HTTP 接口（[规范](https://github.com/botuniverse/onebot-11/blob/master/communication/http.md)）：
+
+```
+GET  http://<host>:8090/<action>?key=value
+POST http://<host>:8090/<action>          # JSON / urlencoded / query 均可
+```
+
+机器人按 `access_token` 反查；未配置 token 且只有一个启用中的机器人时直接命中。
+多机器人场景可以用显式路径指定：
 
 ```
 POST http://<host>:8090/onebot/v11/<botId>/<action>
 ```
 
-请求体就是 params，响应为标准的 `{status, retcode, data}`，HTTP 状态码统一 200（由 `retcode` 区分结果）。
-认证支持两种写法，与 WS 一致：
+状态码遵循规范：
+
+| 状态码 | 含义 |
+| --- | --- |
+| 200 | 请求已处理，成功与否看响应体 `retcode` |
+| 401 | 机器人配了 token，但请求未提供 |
+| 403 | 提供了 token 但不匹配 |
+| 404 | action 不存在 |
 
 ```bash
-curl -H 'Authorization: Bearer <onebot_token>' \
-  -X POST http://127.0.0.1:8090/onebot/v11/<botId>/send_group_msg \
+curl 'http://127.0.0.1:8090/get_status'
+# {"status":"ok","retcode":0,"data":{"good":true,"online":true}}
+
+curl -H 'Authorization: Bearer <onebot_token>' -X POST \
+  http://127.0.0.1:8090/send_group_msg \
   -d '{"group_id":10000000005,"message":[{"type":"text","data":{"text":"hi"}}]}'
 
-curl -X POST 'http://127.0.0.1:8090/onebot/v11/<botId>/get_login_info?access_token=<onebot_token>' -d '{}'
+# query / urlencoded 传参会被自动做类型还原（字符串 "10000000005" -> 数字）
+curl -X POST http://127.0.0.1:8090/send_group_msg \
+  --data-urlencode "group_id=10000000005" --data-urlencode "message=hi"
 ```
 
 注意 ZeroBot 的 HTTP driver 是**纯 HTTP 模式**：`NewHTTPClient(url, token, callerURL, callerToken)`

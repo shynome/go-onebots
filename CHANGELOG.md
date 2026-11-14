@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### 新增
+
+- 实现 OneBot v11 标准 HTTP 接口：`GET|POST /{action}`（含尾部斜杠），
+  支持 query、urlencoded 表单、JSON 三种传参，字符串参数自动还原为数字/布尔
+- 机器人按 `access_token` 反查；未配置 token 且只有一个启用中的机器人时直接命中
+- 状态码遵循规范：401 未提供 token、403 token 不符、404 action 不存在、其余 200
+
+### 修复
+
+- 配了 `onebot_token` 的机器人不再被"唯一启用"兜底命中，必须显式提供 token
+
 ## [0.2.2] - 2026-11-14
 
 ### 修复
