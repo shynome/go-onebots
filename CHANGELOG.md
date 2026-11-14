@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] - 2026-11-15
+
+### 新增
+
+- **群管理事件**：机器人进群 / 退群 / 群管理员开关通知
+  - `GROUP_ADD_ROBOT` / `GROUP_DEL_ROBOT` → 群记录 `extra.state` = `joined` / `left`
+  - `GROUP_MSG_RECEIVE` / `GROUP_MSG_REJECT` → `extra.state` = `notify_on` / `notify_off`
+  - 同时记录操作人 `op_member` 与 `state_at`
+- **单聊管理事件**：主动消息开关与好友关系
+  - `C2C_MSG_RECEIVE` / `C2C_MSG_REJECT` → 用户记录 `extra.proactive` = `on` / `off`
+  - `FRIEND_ADD` / `FRIEND_DEL` → `extra.friend` = `on` / `off`
+- **群内状态探测**：群消息因无权限发送失败时，后台查一次
+  `GET /v2/groups/{group_openid}/bot_state`
+  - 记录 `allow_proactive_msg` / `member_role` / `recv_msg_setting`，
+    并写入群记录 `extra`，用来区分「主动消息没开」还是其他原因
+  - 接口只对白名单机器人开放（否则 `11253`），查不到只记日志，不阻塞发送响应
+
+### 变更
+
+- 未接入的 QQ 事件改为 debug 级别记录（含原始数据），便于排查
+  `RESUMED` 显式忽略，不再落到 default 分支
+
 ## [0.3.13] - 2026-11-15
 
 ### 变更

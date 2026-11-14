@@ -40,6 +40,8 @@ const (
 	dedupMax = 2000
 	// maxConcurrentActions 单个 OneBot 连接上同时处理的 action 上限
 	maxConcurrentActions = 16
+	// probeTimeout 发送失败后查询机器人群内状态的超时
+	probeTimeout = 5 * time.Second
 )
 
 type Manager struct {
@@ -661,7 +663,50 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, s
 	}
 
 	c.logger.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
+	// 无权限失败时顺手查一次机器人群内状态, 用来区分是主动消息没开还是别的原因
+	if noPermission(err) {
+		c.probeBotState(b, openid)
+	}
 	return failResponse(1200, "发送失败: "+err.Error())
+}
+
+// noPermission 判断发送失败是否因为权限不足
+// 40034105 主动消息无权限, 40034142 @全体 无权限
+func noPermission(err error) bool {
+	var apiErr *qqbot.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	body := strings.ToLower(apiErr.Body)
+	return strings.Contains(body, "40034105") ||
+		strings.Contains(body, "无权限") ||
+		strings.Contains(body, "permission")
+}
+
+// probeBotState 后台查询机器人群内状态并记录
+// 不阻塞发送响应, 查不到(接口只对白名单开放)也只记日志
+func (c *BotContext) probeBotState(b *bot.Bot, groupOpenID string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		defer cancel()
+
+		st, err := b.Client().BotState(ctx, groupOpenID)
+		if err != nil {
+			c.logger.Warn("查询机器人群内状态失败", "bot", c.botID, "group", groupOpenID, "error", err)
+			return
+		}
+
+		c.logger.Warn("机器人群内状态", "bot", c.botID, "group", groupOpenID,
+			"allow_proactive_msg", st.AllowProactiveMsg,
+			"member_role", st.MemberRole,
+			"recv_msg_setting", st.RecvMsgSetting)
+
+		c.ids.SetExtra(idmap.KindGroup, groupOpenID, map[string]any{
+			"allow_proactive_msg": st.AllowProactiveMsg,
+			"member_role":         st.MemberRole,
+			"recv_msg_setting":    st.RecvMsgSetting,
+		})
+	}()
 }
 
 // sendAtAllFallback 主端发不出 @全体 时, 让配置好的备用 OneBot 端补一条

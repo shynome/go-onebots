@@ -153,6 +153,8 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 			return
 		}
 		c.setSelf(num, ready.User.Username, ready.User.ID)
+	case qqbot.EventResumed:
+		// resume 沿用上个 session, 自身信息不变, 无需重新记录
 	case qqbot.EventC2CMessageCreate:
 		c.handleC2C(p.Data)
 	case qqbot.EventGroupATMessageCreate:
@@ -161,7 +163,77 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 	case qqbot.EventGroupMessageCreate:
 		// 群内全量消息, 是否 @ 机器人由 mentions 决定
 		c.handleGroup(p.Data, false)
+	case qqbot.EventGroupAddRobot:
+		c.handleGroupManage(p.Data, "joined")
+	case qqbot.EventGroupDelRobot:
+		c.handleGroupManage(p.Data, "left")
+	case qqbot.EventGroupMsgReceive:
+		// 群管理员开启了机器人的通知(主动消息)
+		c.handleGroupManage(p.Data, "notify_on")
+	case qqbot.EventGroupMsgReject:
+		// 群管理员关闭了机器人的通知(主动消息), 之后发消息会返回 40034105
+		c.handleGroupManage(p.Data, "notify_off")
+	case qqbot.EventC2CMsgReceive:
+		c.handleC2CManage(p.Data, "proactive", "on")
+	case qqbot.EventC2CMsgReject:
+		c.handleC2CManage(p.Data, "proactive", "off")
+	case qqbot.EventFriendAdd:
+		c.handleC2CManage(p.Data, "friend", "on")
+	case qqbot.EventFriendDel:
+		c.handleC2CManage(p.Data, "friend", "off")
+	default:
+		// 未接入的事件只打 debug, 用得上时再实现
+		c.logger.Debug("未处理的事件", "bot", c.botID, "event", p.Event, "data", string(p.Data))
 	}
+}
+
+// handleC2CManage 记录用户级状态: 主动消息推送开关 / 好友关系
+// 状态存在 onebot_id_map 的用户记录 extra 里
+// proactive=on 表示用户允许机器人给他发主动消息, friend=on 表示还是好友
+func (c *BotContext) handleC2CManage(data json.RawMessage, key, value string) {
+	var ev qqbot.C2CManageEvent
+	if err := json.Unmarshal(data, &ev); err != nil {
+		c.logger.Warn("解析单聊管理事件失败", "bot", c.botID, "key", key, "error", err)
+		return
+	}
+	if ev.OpenID == "" {
+		return
+	}
+	// 先把用户记进 idmap, 否则 SetExtra 找不到记录会静默丢弃
+	if _, err := c.ids.Num(idmap.KindUser, ev.OpenID); err != nil {
+		c.logger.Warn("记录用户状态失败, 无法分配用户 id", "bot", c.botID, "openid", ev.OpenID, "error", err)
+		return
+	}
+	c.ids.SetExtra(idmap.KindUser, ev.OpenID, map[string]any{
+		key:        value,
+		"state_at": ev.Timestamp,
+	})
+	c.logger.Info("用户状态变更", "bot", c.botID, "openid", ev.OpenID, key, value)
+}
+
+// handleGroupManage 记录群状态变更: 机器人进出群 / 管理员开关通知(主动消息)
+// 状态存在 onebot_id_map 的群记录 extra 里, 字段名 state
+func (c *BotContext) handleGroupManage(data json.RawMessage, state string) {
+	var ev qqbot.GroupManageEvent
+	if err := json.Unmarshal(data, &ev); err != nil {
+		c.logger.Warn("解析群管理事件失败", "bot", c.botID, "state", state, "error", err)
+		return
+	}
+	if ev.GroupOpenID == "" {
+		return
+	}
+	// 先确保群记录存在(入群事件会早于第一条消息)
+	if _, err := c.ids.Num(idmap.KindGroup, ev.GroupOpenID); err != nil {
+		c.logger.Warn("记录群状态失败, 无法分配群 id", "bot", c.botID, "group", ev.GroupOpenID, "error", err)
+		return
+	}
+	c.ids.SetExtra(idmap.KindGroup, ev.GroupOpenID, map[string]any{
+		"state":     state,
+		"op_member": ev.OpMemberOpenID,
+		"state_at":  ev.Timestamp,
+	})
+	c.logger.Info("群状态变更", "bot", c.botID, "group", ev.GroupOpenID,
+		"state", state, "op_member", ev.OpMemberOpenID)
 }
 
 // userOpenID 把 at 段里的真实 QQ 号换成 openid
