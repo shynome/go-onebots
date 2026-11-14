@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.4] - 2026-11-14
+
+### 修复
+
+- PocketBase 后台字段展示顺序整理，按「身份 → 内容 → 媒体 → 状态」排列：
+  - `onebot_outbox`：`content` / `markdown` / `segments` 提到 `media_*` 之前
+  - `onebot_events`：`event`（大 JSON）移到末尾
+  - `onebot_media`：`source` / `width` / `height` 紧跟 `kind`
+  - `onebot_id_map`：`qq_number` 紧跟 `num`
+
+### 回退
+
+- 撤回 0.3.3 中「markdown 消息下 `onebot_events.content` 为空」的改动：
+  该列恢复存 `raw_message`；纯媒体消息不再清空 `req.Content`，
+  文本 + 视频消息的文本部分不再丢失
+
 ## [0.3.2] - 2026-11-14
 
 ### 修复
