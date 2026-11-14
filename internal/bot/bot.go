@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/db"
@@ -25,6 +26,9 @@ type Bot struct {
 	selfMu sync.RWMutex
 	self   qqbot.User
 	ready  bool
+
+	// loadMu 防止并发重复拉取自身信息
+	loadMu sync.Mutex
 }
 
 var registry = struct {
@@ -114,11 +118,49 @@ func StopAll() {
 // Client 返回 QQ 官方 API 客户端
 func (b *Bot) Client() *qqbot.Client { return b.client }
 
-// Self 返回机器人自身信息, 未就绪时 ok=false
+// Self 返回机器人自身信息
+// resume 场景不会重发 READY, 此时用 REST /users/@me 补齐一次
 func (b *Bot) Self() (qqbot.User, bool) {
+	b.selfMu.RLock()
+	u, ready := b.self, b.ready
+	b.selfMu.RUnlock()
+	if ready {
+		return u, true
+	}
+
+	b.tryLoadSelf()
+
 	b.selfMu.RLock()
 	defer b.selfMu.RUnlock()
 	return b.self, b.ready
+}
+
+// tryLoadSelf 通过 REST 获取机器人自身信息
+func (b *Bot) tryLoadSelf() {
+	b.loadMu.Lock()
+	defer b.loadMu.Unlock()
+
+	b.selfMu.RLock()
+	ready := b.ready
+	b.selfMu.RUnlock()
+	if ready {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	u, err := b.client.Me(ctx)
+	if err != nil {
+		slog.Warn("获取机器人自身信息失败", "bot", b.Record.Id, "error", err)
+		return
+	}
+
+	b.selfMu.Lock()
+	b.self = u
+	b.ready = true
+	b.selfMu.Unlock()
+	slog.Info("qq 机器人信息已补齐", "bot", b.Record.Id, "name", u.Username, "openid", u.ID)
 }
 
 // Subscribe 注册事件处理器
@@ -162,6 +204,10 @@ func (b *Bot) handle(p qqbot.Payload) {
 			b.ready = true
 			b.selfMu.Unlock()
 		}
+	case qqbot.EventResumed:
+		// resume 成功不会重发 READY, 这里补一次自身信息
+		slog.Info("qq 网关已恢复", "bot", b.Record.Id)
+		b.tryLoadSelf()
 	case qqbot.EventC2CMessageCreate, qqbot.EventGroupATMessageCreate, qqbot.EventGroupMessageCreate:
 		slog.Info("收到 QQ 消息", "bot", b.Record.Id, "event", p.Event, "data", string(p.Data))
 	default:
