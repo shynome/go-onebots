@@ -17,6 +17,7 @@ func main() {
 	mgr := onebot.NewManager(app)
 	initBots(app, mgr)
 	initEventsCleanup(app)
+	mgr.StartOutboxWorker()
 
 	try.To(app.Start())
 }

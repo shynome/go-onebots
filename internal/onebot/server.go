@@ -17,6 +17,7 @@ import (
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
+	"github.com/shynome/go-onebots/internal/outbox"
 )
 
 // Version 由 main 注入
@@ -61,6 +62,7 @@ func (m *Manager) Get(botID string) *BotContext {
 		log:       eventlog.New(m.app, botID),
 		clients:   map[*wsClient]struct{}{},
 		atAll:     map[string]string{},
+		outbox:    outbox.New(m.app),
 		deliverCh: make(chan string, 1024),
 	}
 	c.restore()
@@ -100,6 +102,9 @@ type BotContext struct {
 	// atAll 记录每群当天是否已用过 @全体 配额
 	atAllMu sync.Mutex
 	atAll   map[string]string
+
+	// outbox 出站消息队列, 先落库再发送
+	outbox *outbox.Store
 
 	deliverCh chan string
 }

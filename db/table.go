@@ -13,4 +13,6 @@ const (
 	TableEvents = "onebot_events"
 	// TableMedia 富媒体中转记录
 	TableMedia = "onebot_media"
+	// TableOutbox 出站消息队列, 先落库再发送, 支持崩溃后补发
+	TableOutbox = "onebot_outbox"
 )

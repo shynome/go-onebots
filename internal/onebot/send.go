@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,10 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 	"github.com/shynome/go-onebots/internal/media"
+	"github.com/shynome/go-onebots/internal/outbox"
 	"github.com/shynome/go-onebots/internal/qqbot"
 )
 
@@ -27,6 +30,7 @@ const maxOutbounds = 5
 type mediaItem struct {
 	kind string // image / record / video / file
 	file string // OneBot 段里的 file 或 url
+	url  string // 已解析出的可访问 URL, 重试时复用
 }
 
 type outbound struct {
@@ -171,56 +175,157 @@ func fileTypeOf(kind string) qqbot.FileType {
 	}
 }
 
+// 发送重试策略: 同步重试 2 次(共 3 次尝试), 仍失败则标记 failed
+const (
+	maxSendRetry  = 2
+	sendRetryBase = time.Second
+)
+
+// retryable 判断错误是否值得重试
+// QQ 返回的 4xx 基本是内容审核/权限/频次问题, 重试也无效
+func retryable(err error) bool {
+	var apiErr *qqbot.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
+	}
+	return true
+}
+
+func retryBackoff(attempt int) time.Duration {
+	return sendRetryBase * time.Duration(1<<attempt)
+}
+
 // sendOutbounds 按编排结果逐条发送, 每条都消耗一次被动回复序号
+// 每条消息先写 outbox 再发送, 进程崩溃后可以由定时任务补发
 func (c *BotContext) sendOutbounds(ctx context.Context, b *bot.Bot, scene, openid string, out []outbound) (qqbot.SendResult, error) {
 	var last qqbot.SendResult
 
 	for i := range out {
-		ob := out[i]
-		req := qqbot.SendMessageRequest{
-			MsgType: qqbot.MsgTypeText,
-			Content: ob.content,
+		rec, err := c.enqueueOutbound(scene, openid, out[i])
+		if err != nil {
+			return last, fmt.Errorf("写入发送队列失败: %w", err)
 		}
 
-		if ob.media != nil {
-			fileURL, err := c.resolveMediaURL(ctx, *ob.media)
-			if err != nil {
-				return last, err
-			}
-			up, err := c.uploadMediaToQQ(ctx, b, scene, openid, qqbot.UploadRequest{
-				FileType: fileTypeOf(ob.media.kind),
-				URL:      fileURL,
-			})
-			if err != nil {
-				return last, fmt.Errorf("上传媒体到 QQ 失败: %w", err)
-			}
-			req.MsgType = qqbot.MsgTypeMedia
-			req.Media = &qqbot.Media{FileInfo: up.FileInfo}
-		}
-
-		msgID, seq := c.reply.Next(scene, openid)
-		if msgID == "" {
-			slog.Warn("被动回复窗口已过期, 尝试发送主动消息",
-				"bot", c.botID, "scene", scene, "target", openid, "index", i)
-		}
-		req.MsgID = msgID
-		req.MsgSeq = seq
-
-		res, err := c.sendQQMessage(ctx, b, scene, openid, req)
+		res, err := c.deliver(ctx, b, rec)
 		if err != nil {
 			return last, err
 		}
-		c.recordSent(scene, openid, ob, res.ID)
 		last = res
 	}
 	return last, nil
 }
 
+func (c *BotContext) enqueueOutbound(scene, openid string, ob outbound) (*core.Record, error) {
+	it := outbox.Item{
+		BotID:   c.botID,
+		Scene:   scene,
+		Target:  openid,
+		Content: ob.content,
+	}
+	if ob.media != nil {
+		it.MediaKind = ob.media.kind
+		it.MediaFile = ob.media.file
+		it.MediaURL = ob.media.url
+	}
+	return c.outbox.Enqueue(it)
+}
+
+// deliver 发送一条 outbox 记录, 内部做有限次重试
+func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) (qqbot.SendResult, error) {
+	var last qqbot.SendResult
+
+	for attempt := 0; ; attempt++ {
+		res, err := c.deliverOnce(ctx, b, rec)
+		if err == nil {
+			if serr := c.outbox.MarkSent(rec, res.ID); serr != nil {
+				slog.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", serr)
+			}
+			c.recordSent(rec, res.ID)
+			return res, nil
+		}
+		last = res
+
+		if !retryable(err) || attempt >= maxSendRetry {
+			if ferr := c.outbox.MarkFailed(rec, err.Error()); ferr != nil {
+				slog.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", ferr)
+			}
+			return last, err
+		}
+
+		delay := retryBackoff(attempt)
+		slog.Warn("发送失败, 准备重试", "bot", c.botID, "attempt", attempt+1, "delay", delay, "error", err)
+		if rerr := c.outbox.RetryLater(rec, time.Now().Add(delay), err.Error()); rerr != nil {
+			slog.Warn("更新重试时间失败", "bot", c.botID, "record", rec.Id, "error", rerr)
+		}
+
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			c.outbox.MarkFailed(rec, "已取消: "+ctx.Err().Error())
+			return last, ctx.Err()
+		}
+	}
+}
+
+// deliverOnce 尝试发送一次
+func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Record) (qqbot.SendResult, error) {
+	scene := rec.GetString("scene")
+	openid := rec.GetString("target")
+
+	var m *mediaItem
+	if kind := rec.GetString("media_kind"); kind != "" {
+		m = &mediaItem{kind: kind, file: rec.GetString("media_file"), url: rec.GetString("media_url")}
+	}
+
+	req := qqbot.SendMessageRequest{
+		MsgType: qqbot.MsgTypeText,
+		Content: rec.GetString("content"),
+	}
+
+	if m != nil {
+		fileURL, err := c.resolveMediaURL(ctx, *m)
+		if err != nil {
+			return qqbot.SendResult{}, err
+		}
+		if m.url == "" {
+			if serr := c.outbox.SetMediaURL(rec, fileURL); serr != nil {
+				slog.Debug("缓存媒体 URL 失败", "bot", c.botID, "record", rec.Id, "error", serr)
+			}
+		}
+		up, err := c.uploadMediaToQQ(ctx, b, scene, openid, qqbot.UploadRequest{
+			FileType: fileTypeOf(m.kind),
+			URL:      fileURL,
+		})
+		if err != nil {
+			return qqbot.SendResult{}, fmt.Errorf("上传媒体到 QQ 失败: %w", err)
+		}
+		req.MsgType = qqbot.MsgTypeMedia
+		req.Media = &qqbot.Media{FileInfo: up.FileInfo}
+	}
+
+	msgID, seq := c.reply.Next(scene, openid)
+	if msgID == "" {
+		slog.Warn("被动回复窗口已过期, 尝试发送主动消息",
+			"bot", c.botID, "scene", scene, "target", openid)
+	}
+	req.MsgID = msgID
+	req.MsgSeq = seq
+
+	return c.sendQQMessage(ctx, b, scene, openid, req)
+}
+
 // recordSent 把机器人自己发出的消息写进事件日志
 // 直接标记为已投递, 不会补发给客户端, 仅供 get_msg 与群历史查询使用
-func (c *BotContext) recordSent(scene, openid string, ob outbound, messageID string) {
+func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 	if messageID == "" {
 		return
+	}
+
+	scene := rec.GetString("scene")
+	openid := rec.GetString("target")
+	ob := outbound{content: rec.GetString("content")}
+	if kind := rec.GetString("media_kind"); kind != "" {
+		ob.media = &mediaItem{kind: kind, file: rec.GetString("media_file")}
 	}
 
 	num, err := c.ids.MessageNum(messageID, map[string]any{
@@ -298,6 +403,9 @@ func (c *BotContext) sendQQMessage(ctx context.Context, b *bot.Bot, scene, openi
 // resolveMediaURL 把消息段里的媒体来源转成 QQ 可访问的 URL
 // 公网 URL 直接透传, base64 / 本地文件存进 PocketBase 后返回 /api/files 链接
 func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, error) {
+	if m.url != "" {
+		return m.url, nil
+	}
 	file := m.file
 
 	switch {
