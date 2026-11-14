@@ -3,6 +3,7 @@ package onebot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 	"github.com/shynome/go-onebots/internal/outbox"
+	"github.com/shynome/go-onebots/internal/qqbot"
 )
 
 // Version 由 main 注入
@@ -63,7 +65,6 @@ func (m *Manager) Get(botID string) *BotContext {
 		reply:     newReplyCtx(),
 		log:       eventlog.New(m.app, botID),
 		clients:   map[*wsClient]struct{}{},
-		atAll:     map[string]string{},
 		outbox:    outbox.New(m.app),
 		deliverCh: make(chan string, 1024),
 	}
@@ -100,10 +101,6 @@ type BotContext struct {
 	clientsMu sync.Mutex
 	clients   map[*wsClient]struct{}
 	pending   []pendingEvent
-
-	// atAll 记录每群当天是否已用过 @全体 配额
-	atAllMu sync.Mutex
-	atAll   map[string]string
 
 	// outbox 出站消息队列, 先落库再发送
 	outbox *outbox.Store
@@ -624,12 +621,12 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 	}
 
 	if scene == "group" {
-		return c.sendGroup(ctx, b, p.GroupID.Int64(), out)
+		return c.sendGroup(ctx, b, p.GroupID.Int64(), segs, out)
 	}
 	return c.sendPrivate(ctx, b, p.UserID.Int64(), out)
 }
 
-func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, out []outbound) actionResponse {
+func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, segs []Segment, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindGroup, groupID)
 	if err != nil {
 		// 不是映射 id 时, 尝试当作真实群号去 idmap 里查
@@ -639,26 +636,62 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, o
 		}
 	}
 
-	hasAtAll := false
-	for _, ob := range out {
-		if strings.Contains(ob.content, "<qqbot-at-everyone") {
-			hasAtAll = true
-			break
-		}
-	}
-	if hasAtAll && !c.acquireAtAll(openid) {
-		return failResponse(1200, "QQ 限制每群每天只能 @全体成员 一次, 今天已用过")
-	}
+	hasAtAll := hasAtAllSegs(segs)
 
 	res, err := c.sendOutbounds(ctx, b, "group", openid, out)
-	if err != nil {
-		if hasAtAll {
-			c.releaseAtAll(openid)
-		}
-		slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
-		return failResponse(1200, "发送失败: "+err.Error())
+	if err == nil {
+		return okResponse(c.messageData("group", openid, res.ID))
 	}
-	return okResponse(c.messageData("group", openid, res.ID))
+
+	// QQ 侧拒绝 @全体(无管理员权限 / 当日已达上限) 时, 去掉 at 重发一遍
+	if hasAtAll && atAllRejected(err) {
+		retryOut, retrySkipped := c.buildOutbounds(withoutAtAll(segs), "group")
+		logSkipped(c.botID, retrySkipped)
+		if len(retryOut) > 0 {
+			if res, rerr := c.sendOutbounds(ctx, b, "group", openid, retryOut); rerr == nil {
+				slog.Warn("去掉 @全体 后发送成功", "bot", c.botID, "group", openid, "error", err)
+				return okResponse(c.messageData("group", openid, res.ID))
+			}
+		}
+	}
+
+	slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
+	return failResponse(1200, "发送失败: "+err.Error())
+}
+
+// hasAtAllSegs 判断段里是否含 @全体
+func hasAtAllSegs(segs []Segment) bool {
+	for _, s := range segs {
+		if s.Type == "at" && s.Data["qq"] == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutAtAll 去掉 @全体 段, 保留其余段
+func withoutAtAll(segs []Segment) []Segment {
+	out := make([]Segment, 0, len(segs))
+	for _, s := range segs {
+		if s.Type == "at" && s.Data["qq"] == "all" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// atAllRejected 判断失败是否因为 @全体 不被允许(无管理员权限 / 当日已达上限)
+func atAllRejected(err error) bool {
+	var apiErr *qqbot.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	body := strings.ToLower(apiErr.Body)
+	return strings.Contains(body, "40034142") ||
+		strings.Contains(body, "everyone") ||
+		strings.Contains(body, "permission") ||
+		strings.Contains(body, "权限")
 }
 
 func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, out []outbound) actionResponse {
