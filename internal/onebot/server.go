@@ -63,7 +63,6 @@ func (m *Manager) Get(botID string) *BotContext {
 		mgr:       m,
 		botID:     botID,
 		ids:       idmap.New(m.app, botID),
-		reply:     newReplyCtx(),
 		log:       eventlog.New(m.app, botID),
 		clients:   map[*wsClient]struct{}{},
 		outbox:    outbox.New(m.app),
@@ -87,7 +86,6 @@ type BotContext struct {
 	mgr   *Manager
 	botID string
 	ids   *idmap.Map
-	reply *replyCtx
 	log   *eventlog.Log
 
 	seq int64 // 事件序号, 原子递增
@@ -258,7 +256,7 @@ func (c *BotContext) pushPendingLocked(id string, data []byte) {
 	}
 }
 
-func (c *BotContext) broadcast(ev wsEvent) {
+func (c *BotContext) broadcast(ev wsEvent, raw []byte) {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		c.logger.Warn("序列化事件失败", "bot", c.botID, "error", err)
@@ -274,6 +272,7 @@ func (c *BotContext) broadcast(ev wsEvent) {
 		MessageID:   ev.MessageID,
 		Content:     ev.RawMessage,
 		Data:        data,
+		Raw:         raw,
 	})
 	if err != nil {
 		c.logger.Warn("写入事件日志失败", "bot", c.botID, "error", err)

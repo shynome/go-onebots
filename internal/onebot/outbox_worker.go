@@ -15,8 +15,8 @@ const (
 	outboxCron = "* * * * *"
 	// outboxBatch 单次最多处理条数
 	outboxBatch = 50
-	// outboxMaxAge 超过被动回复窗口就不再补发, 避免把陈旧消息发到群里
-	outboxMaxAge = replyWindow
+	// outboxMaxAge 超过该时长的积压消息不再补发, 避免把陈旧消息发到群里
+	outboxMaxAge = 5 * time.Minute
 	// outboxMaxAttempts 累计尝试次数上限, 防止反复崩溃时无限重试
 	outboxMaxAttempts = 3
 )

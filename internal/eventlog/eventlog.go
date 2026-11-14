@@ -31,6 +31,8 @@ type Record struct {
 	MessageID   int64
 	Content     string
 	Data        []byte
+	// Raw QQ 下发的原始消息 JSON, 未经 OneBot 转换, 供排查与引用回复使用
+	Raw []byte
 	// Delivered 为 true 时直接标记已投递, 不会再补发给客户端
 	// 机器人自己发出的消息用这个, 只作为历史记录存在
 	Delivered bool
@@ -66,6 +68,9 @@ func (l *Log) Append(rec Record) (string, error) {
 	r.Set("message_id", rec.MessageID)
 	r.Set("content", rec.Content)
 	r.Set("event", types.JSONRaw(rec.Data))
+	if len(rec.Raw) > 0 {
+		r.Set("raw", types.JSONRaw(rec.Raw))
+	}
 	r.Set("delivered", rec.Delivered)
 	if rec.Delivered {
 		r.Set("delivered_at", types.NowDateTime())

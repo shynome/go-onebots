@@ -17,6 +17,14 @@ func main() {
 		ctx.Send("world")
 	})
 
+	// 引用回复: reply 段会被服务端映射成 QQ 的 msg_id + msg_seq
+	zero.OnCommand("reply").Handle(func(ctx *zero.Ctx) {
+		ctx.SendChain(
+			message.Reply(ctx.Event.MessageID),
+			message.Text("这是引用回复"),
+		)
+	})
+
 	// 本地文件 -> S3 中转 -> 预签名 URL
 	zero.OnCommand("pic").Handle(func(ctx *zero.Ctx) {
 		ctx.Send(message.Message{

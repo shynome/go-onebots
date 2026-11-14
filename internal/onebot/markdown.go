@@ -230,9 +230,15 @@ func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (
 			}
 			sb.WriteString(markdownImage(img.w, img.h, img.url))
 		case "at":
-			// 群聊的 @全部成员 支持 markdown 消息; 单人 @ 暂不支持
-			if s.Data["qq"] == "all" {
+			qq := s.Data["qq"]
+			if qq == "all" {
+				// 群聊的 @全部成员
 				sb.WriteString("<qqbot-at-everyone />")
+				continue
+			}
+			// 群聊的 @用户: id 填被 @ 群成员的 member_openid
+			if openid, ok := c.userOpenID(qq); ok {
+				sb.WriteString(`<qqbot-at-user id="` + openid + `" />`)
 			}
 		}
 	}

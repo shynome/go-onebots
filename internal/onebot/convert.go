@@ -164,6 +164,34 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 	}
 }
 
+// userOpenID 把 at 段里的真实 QQ 号换成 openid
+// QQ 只给 openid, 号码与 openid 的对应关系存在 onebot_id_map
+func (c *BotContext) userOpenID(qq string) (string, bool) {
+	num, err := strconv.ParseInt(qq, 10, 64)
+	if err != nil || num <= 0 {
+		return "", false
+	}
+	openid, err := c.ids.OpenIDByNumber(idmap.KindUser, num)
+	if err != nil || openid == "" {
+		return "", false
+	}
+	return openid, true
+}
+
+// setSceneExtra 把 message_scene 完整存进消息的 extra
+// msg_idx 单独存一份, 引用回复时直接用, 不用再反解 JSON
+func setSceneExtra(extra map[string]any, sc qqbot.MessageScene) {
+	if len(sc.Ext) == 0 {
+		return
+	}
+	extra["message_scene"] = sc
+	for _, s := range sc.Ext {
+		if id, ok := strings.CutPrefix(s, "msg_idx="); ok {
+			extra["msg_idx"] = id
+		}
+	}
+}
+
 // isSelfMessage 判断这条 QQ 消息是不是机器人自己发出去后回流的
 // Author 里没有 bot 标记, 自己的 openid 在群里也与 READY 拿到的不同,
 // 所以用「发送成功时登记过的 message_id」来判定
@@ -203,9 +231,9 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 	if qq, ok := c.numberBinds(idmap.KindUser)[openid]; ok {
 		userNum = qq
 	}
-	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
-		"scene": "private", "target": openid,
-	})
+	msgExtra := map[string]any{"scene": "private", "target": openid}
+	setSceneExtra(msgExtra, msg.MessageScene)
+	msgNum, err := c.ids.MessageNum(msg.ID, msgExtra)
 	if err != nil {
 		c.logger.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
 		return
@@ -216,8 +244,6 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		"avatar":   msg.Author.Avatar,
 		"scene":    "private",
 	})
-
-	c.reply.Set("private", openid, msg.ID)
 
 	c.broadcast(wsEvent{
 		Time:        eventTime(msg.Timestamp),
@@ -234,7 +260,7 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 			Sex:      "unknown",
 		},
 		Message: buildMessageSegments(msg.Content, msg.Attachments, 0),
-	})
+	}, data)
 }
 
 func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
@@ -276,9 +302,9 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 	if qq, ok := binds[msg.GroupOpenID]; ok {
 		groupNum = qq
 	}
-	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
-		"scene": "group", "target": msg.GroupOpenID,
-	})
+	msgExtra := map[string]any{"scene": "group", "target": msg.GroupOpenID}
+	setSceneExtra(msgExtra, msg.MessageScene)
+	msgNum, err := c.ids.MessageNum(msg.ID, msgExtra)
 	if err != nil {
 		c.logger.Warn("分配消息 id 失败", "bot", c.botID, "error", err)
 		return
@@ -295,8 +321,6 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 		"avatar":   msg.Author.Avatar,
 		"group":    msg.GroupOpenID,
 	})
-
-	c.reply.Set("group", msg.GroupOpenID, msg.ID)
 	segments := c.buildGroupSegments(msg, selfNum, atEvent)
 
 	c.broadcast(wsEvent{
@@ -318,7 +342,7 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 			Sex:      "unknown",
 		},
 		Message: segments,
-	})
+	}, data)
 }
 
 // buildGroupSegments 把群消息 content 拆成 OneBot 消息段

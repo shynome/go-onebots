@@ -39,6 +39,8 @@ type Item struct {
 	MediaKind string
 	MediaFile string
 	MediaURL  string
+	// ReplyTo 引用回复目标的 msg_idx(REFIDX_...), 空表示不引用
+	ReplyTo string
 }
 
 // Enqueue 写入一条待发送记录, 返回记录以便后续更新状态
@@ -61,6 +63,7 @@ func (s *Store) Enqueue(it Item) (*core.Record, error) {
 	r.Set("media_kind", it.MediaKind)
 	r.Set("media_file", it.MediaFile)
 	r.Set("media_url", it.MediaURL)
+	r.Set("reply_to", it.ReplyTo)
 	r.Set("state", StatePending)
 	r.Set("attempts", 0)
 	r.Set("next_retry_at", types.NowDateTime())

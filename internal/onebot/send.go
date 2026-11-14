@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,8 @@ type outbound struct {
 	markdown string    // 非空表示直接作为 markdown 发送(msg_type=2)
 	segments []Segment // 非空表示发送时拼成 markdown(文本+图片保序)
 	media    *mediaItem
+	// replyTo 引用回复的目标 OneBot message_id, 空表示不引用
+	replyTo string
 }
 
 // ParseSegments 解析 OneBot 的 message 参数, 支持段数组 / 单段 / CQ 码字符串
@@ -115,11 +118,19 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	var sb strings.Builder
 	var medias []mediaItem
 	var markdown string
+	var replyTo string
+	// 群聊的 @用户 只支持 markdown 消息, 有单人 at 时优先走 markdown
+	var atUser bool
 
 	for _, s := range segs {
 		switch s.Type {
 		case "text":
 			sb.WriteString(s.Data["text"])
+		case "reply":
+			// 引用回复: 后面的发送会把它映射成 QQ 的 msg_id + msg_seq
+			if id := s.Data["id"]; id != "" {
+				replyTo = id
+			}
 		case "markdown":
 			// 显式 markdown 段: 原样交给 QQ, 用于图文混排
 			markdown = s.Data["content"]
@@ -150,22 +161,41 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 		}
 	}
 
+	// 引用回复只挂在第一条消息上
+	attachReply := func(outs []outbound) []outbound {
+		if replyTo != "" && len(outs) > 0 {
+			outs[0].replyTo = replyTo
+		}
+		return outs
+	}
+
 	text := strings.TrimSpace(sb.String())
 	if markdown != "" {
 		out = append(out, outbound{markdown: markdown})
-		return out, skipped
+		return attachReply(out), skipped
 	}
+	if len(medias) == 0 || onlyImages(medias) {
+		if atUser {
+			if mdSegs := markdownTextSegments(segs); len(mdSegs) > 0 {
+				return attachReply([]outbound{{segments: mdSegs}}), skipped
+			}
+		}
+	}
+	if atUser {
+		skipped = append(skipped, "at(单人, 与语音/视频/文件共存时不支持)")
+	}
+
 	if len(medias) == 0 {
 		if text != "" {
 			out = append(out, outbound{content: text})
 		}
-		return out, skipped
+		return attachReply(out), skipped
 	}
 
 	// 文本 + 纯图片: 改用 markdown, 否则 QQ 富媒体消息固定把图片排在文字前面
 	if text != "" && onlyImages(medias) {
 		if mdSegs := markdownTextSegments(segs); len(mdSegs) > 1 {
-			return []outbound{{segments: mdSegs}}, skipped
+			return attachReply([]outbound{{segments: mdSegs}}), skipped
 		}
 	}
 
@@ -175,10 +205,10 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 		out = append(out, outbound{media: &m})
 	}
 	if len(out) > maxOutbounds {
-		skipped = append(skipped, fmt.Sprintf("超出被动回复上限 %d 条", len(out)-maxOutbounds))
+		skipped = append(skipped, fmt.Sprintf("超出单次发送上限 %d 条", len(out)-maxOutbounds))
 		out = out[:maxOutbounds]
 	}
-	return out, skipped
+	return attachReply(out), skipped
 }
 func fileTypeOf(kind string) qqbot.FileType {
 	switch kind {
@@ -240,6 +270,22 @@ func (c *BotContext) enqueueOutbound(scene, openid string, ob outbound) (*core.R
 		Target:   openid,
 		Content:  ob.content,
 		Markdown: ob.markdown,
+	}
+	if ob.replyTo != "" {
+		// OneBot message_id -> 入站事件里的 msg_idx, QQ 的 message_reference 用它
+		num, err := strconv.ParseInt(ob.replyTo, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("引用回复的 message_id 不是数字: %s", ob.replyTo)
+		}
+		_, extra, err := c.ids.MessageExtra(num)
+		if err != nil {
+			return nil, fmt.Errorf("引用回复的消息不存在: %w", err)
+		}
+		refIdx, _ := extra["msg_idx"].(string)
+		if refIdx == "" {
+			return nil, fmt.Errorf("该消息没有引用信息(仅支持引用收到的消息)")
+		}
+		it.ReplyTo = refIdx
 	}
 	if len(ob.segments) > 0 {
 		if data, err := json.Marshal(ob.segments); err == nil {
@@ -342,13 +388,10 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 		req.Media = &qqbot.Media{FileInfo: up.FileInfo}
 	}
 
-	msgID, seq := c.reply.Next(scene, openid)
-	if msgID == "" {
-		c.logger.Warn("被动回复窗口已过期, 尝试发送主动消息",
-			"bot", c.botID, "outbox", rec.Id, "scene", scene, "target", openid)
+	// 引用回复: QQ 用 message_reference 表示引用, 与被动回复的 msg_id 是两回事
+	if ref := rec.GetString("reply_to"); ref != "" {
+		req.MessageReference = &qqbot.MessageReference{MessageID: ref}
 	}
-	req.MsgID = msgID
-	req.MsgSeq = seq
 
 	return c.sendQQMessage(ctx, b, scene, openid, req)
 }

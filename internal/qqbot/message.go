@@ -26,6 +26,13 @@ type Markdown struct {
 	Content string `json:"content,omitempty"`
 }
 
+// MessageReference 引用回复的目标消息
+// 注意: message_id 填的是入站事件 message_scene.ext 里的 msg_idx(REFIDX_...),
+// 不是 message_id, 也不是被动回复用的 msg_id
+type MessageReference struct {
+	MessageID string `json:"message_id"`
+}
+
 // SendMessageRequest 发送消息请求体
 // https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/send-receive/send.html
 type SendMessageRequest struct {
@@ -35,6 +42,8 @@ type SendMessageRequest struct {
 	Markdown *Markdown `json:"markdown,omitempty"`
 	// Media msg_type=7 时使用的富媒体内容
 	Media *Media `json:"media,omitempty"`
+	// MessageReference 引用回复
+	MessageReference *MessageReference `json:"message_reference,omitempty"`
 	// MsgID 被动回复所对应的事件消息 id, 5 分钟内有效
 	MsgID string `json:"msg_id,omitempty"`
 	// MsgSeq 被动回复序号, 同一条被动消息最多 5 次

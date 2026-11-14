@@ -96,24 +96,32 @@ type MessageAttachment struct {
 	AsrReferText string `json:"asr_refer_text"`
 }
 
+// MessageScene 消息场景, ext 里带引用所需的 msg_idx
+type MessageScene struct {
+	Source string   `json:"source"`
+	Ext    []string `json:"ext"`
+}
+
 // C2CMessage 单聊消息
 // https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/c2c_message_create.html
 type C2CMessage struct {
-	ID          string              `json:"id"`
-	Content     string              `json:"content"`
-	Timestamp   string              `json:"timestamp"`
-	Author      Author              `json:"author"`
-	Attachments []MessageAttachment `json:"attachments"`
+	ID           string              `json:"id"`
+	Content      string              `json:"content"`
+	Timestamp    string              `json:"timestamp"`
+	Author       Author              `json:"author"`
+	Attachments  []MessageAttachment `json:"attachments"`
+	MessageScene MessageScene        `json:"message_scene"`
 }
 
 // GroupATMessage 群 @ 机器人消息
 // https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html
 type GroupATMessage struct {
-	ID          string              `json:"id"`
-	Content     string              `json:"content"`
-	Timestamp   string              `json:"timestamp"`
-	GroupOpenID string              `json:"group_openid"`
-	Author      Author              `json:"author"`
-	Attachments []MessageAttachment `json:"attachments"`
-	Mentions    []User              `json:"mentions"`
+	ID           string              `json:"id"`
+	Content      string              `json:"content"`
+	Timestamp    string              `json:"timestamp"`
+	GroupOpenID  string              `json:"group_openid"`
+	Author       Author              `json:"author"`
+	Attachments  []MessageAttachment `json:"attachments"`
+	Mentions     []User              `json:"mentions"`
+	MessageScene MessageScene        `json:"message_scene"`
 }

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.13] - 2026-11-15
+
+### 变更
+
+- **移除被动回复机制**，所有发送一律走主动消息
+  - 被动回复会让 QQ 把消息渲染成「回复 @某人」，推送场景不需要这种引用
+  - 删除 `replyctx.go`（`replyCtx` / `replyWindow` / `replyMaxSeq`），
+    `deliverOnce` 不再设置 `msg_id` / `msg_seq`
+
+### 新增
+
+- **引用回复**：OneBot 的 `reply` 段映射成 QQ 的 `message_reference`
+  - 值取入站事件 `message_scene.ext` 里的 `msg_idx`（`REFIDX_...`），
+    不是 `message_id`，也不是被动回复的 `msg_id`
+  - `onebot_outbox` 新增 `reply_to` 列，入队时算好，重试复用
+- **单人 @**：`at` 段（`qq` 非 `all`）渲染成 `<qqbot-at-user id="...">`
+  - 群聊的 @用户只支持 markdown 消息，因此含单人 at 时强制走 markdown
+  - 只能 @ `onebot_id_map` 里已有记录的用户（即该成员在群里发过言）
+- `onebot_events` 新增 `raw` 字段，保存 QQ 下发的原始消息 JSON
+  - 原 `event` 存的是转成 OneBot 格式后的事件，`message_scene` 等原始字段会丢
+- `onebot_message_map.extra` 一并保存完整的 `message_scene` 与 `msg_idx`
+
 ## [0.3.12] - 2026-11-14
 
 ### 修复
