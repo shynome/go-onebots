@@ -11,23 +11,23 @@ import (
 	"github.com/shynome/go-onebots/internal/idmap"
 )
 
-// groupBinds 返回 openid -> 真实群号 的绑定关系
-// 群号直接保存在 onebot_id_map 的群记录上
-func (c *BotContext) groupBinds() map[string]int64 {
-	m, err := c.ids.GroupNumbers()
+// numberBinds 返回 openid -> 真实号码(群号 / QQ 号) 的对应关系
+// 号码直接保存在 onebot_id_map 的记录上
+func (c *BotContext) numberBinds(kind idmap.Kind) map[string]int64 {
+	m, err := c.ids.Numbers(kind)
 	if err != nil {
 		return nil
 	}
 	return m
 }
 
-// groupOpenIDByNumber 用真实群号查 group_openid
-// QQ 官方 API 只给 openid 不提供群号, 只能靠管理员在 onebot_id_map 里给群记录填 qq_number
-func (c *BotContext) groupOpenIDByNumber(qqNumber int64) (string, error) {
-	openid, err := c.ids.GroupOpenIDByQqNumber(qqNumber)
+// openIDByNumber 用真实号码查 openid
+// QQ 官方 API 只给 openid, 号码只能靠管理员在 onebot_id_map 里填
+func (c *BotContext) openIDByNumber(kind idmap.Kind, number int64, label string) (string, error) {
+	openid, err := c.ids.OpenIDByNumber(kind, number)
 	if err != nil {
-		return "", errors.New("未知的 group_id: " + itoa(qqNumber) +
-			", 既不是已有的映射 id, 也没有在 onebot_id_map 里给该群记录填 qq_number")
+		return "", errors.New("未知的 " + label + ": " + itoa(number) +
+			", 既不是已有的映射 id, 也没有在 onebot_id_map 里给对应记录填 qq_number")
 	}
 	return openid, nil
 }
@@ -182,8 +182,8 @@ func (c *BotContext) getGroupMemberInfo(p lookupParams) actionResponse {
 
 func (c *BotContext) getGroupInfo(p lookupParams) actionResponse {
 	if _, _, err := c.ids.NumExtra(idmap.KindGroup, p.GroupID); err != nil {
-		// 也允许传绑定的真实群号
-		if _, berr := c.groupOpenIDByNumber(p.GroupID); berr != nil {
+		// 也允许传填写过的真实群号
+		if _, berr := c.openIDByNumber(idmap.KindGroup, p.GroupID, "group_id"); berr != nil {
 			return failResponse(1400, "未知的 group_id: "+itoa(p.GroupID)+", 需要先收到该群的消息")
 		}
 	}
@@ -202,7 +202,7 @@ func (c *BotContext) getGroupList() actionResponse {
 		return failResponse(1200, "读取群列表失败: "+err.Error())
 	}
 
-	binds := c.groupBinds()
+	binds := c.numberBinds(idmap.KindGroup)
 	list := make([]map[string]any, 0, len(nums))
 	for _, n := range nums {
 		gid := n

@@ -632,8 +632,8 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindGroup, groupID)
 	if err != nil {
-		// 不是映射 id 时, 尝试当作真实群号去绑定表里查
-		openid, err = c.groupOpenIDByNumber(groupID)
+		// 不是映射 id 时, 尝试当作真实群号去 idmap 里查
+		openid, err = c.openIDByNumber(idmap.KindGroup, groupID, "group_id")
 		if err != nil {
 			return failResponse(1400, err.Error())
 		}
@@ -664,7 +664,11 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, o
 func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindUser, userID)
 	if err != nil {
-		return failResponse(1400, "未知的 user_id: "+itoa(userID)+", 需要先收到该用户的消息才能发送")
+		// 不是映射 id 时, 尝试当作真实 QQ 号去 idmap 里查
+		openid, err = c.openIDByNumber(idmap.KindUser, userID, "user_id")
+		if err != nil {
+			return failResponse(1400, err.Error())
+		}
 	}
 	res, err := c.sendOutbounds(ctx, b, "private", openid, out)
 	if err != nil {

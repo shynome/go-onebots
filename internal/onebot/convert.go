@@ -188,6 +188,10 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		slog.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
 		return
 	}
+	// 已填写真实 QQ 号时对外统一用真实号
+	if qq, ok := c.numberBinds(idmap.KindUser)[openid]; ok {
+		userNum = qq
+	}
 	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
 		"scene": "private", "target": openid,
 	})
@@ -250,8 +254,9 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 		slog.Warn("分配群 id 失败", "bot", c.botID, "error", err)
 		return
 	}
-	// 已绑定真实群号的群, 对外统一用群号
-	if qq, ok := c.groupBinds()[msg.GroupOpenID]; ok {
+	// 已填写的真实号码优先
+	binds := c.numberBinds(idmap.KindGroup)
+	if qq, ok := binds[msg.GroupOpenID]; ok {
 		groupNum = qq
 	}
 	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{

@@ -327,12 +327,12 @@ func (m *Map) NumExtra(kind Kind, num int64) (string, map[string]any, error) {
 	return openid, extra, nil
 }
 
-// GroupNumbers 返回 openid -> 管理员填写的真实群号
-// QQ 官方只给 group_openid, 不提供群号, 所以群号只能人工填写在群记录上
-func (m *Map) GroupNumbers() (map[string]int64, error) {
+// Numbers 返回 openid -> 管理员填写的真实号码
+// QQ 官方只给 openid, 既不提供群号也不提供 QQ 号, 只能人工填写在记录上
+func (m *Map) Numbers(kind Kind) (map[string]int64, error) {
 	recs, err := m.app.FindRecordsByFilter(db.TableIDMap,
-		"bot = {:bot} && kind = 'group' && qq_number > 0", "", 0, 0,
-		dbx.Params{"bot": m.botID},
+		"bot = {:bot} && kind = {:kind} && qq_number > 0", "", 0, 0,
+		dbx.Params{"bot": m.botID, "kind": string(kind)},
 	)
 	if err != nil {
 		return nil, err
@@ -345,17 +345,17 @@ func (m *Map) GroupNumbers() (map[string]int64, error) {
 	return numbers, nil
 }
 
-// GroupOpenIDByQqNumber 按真实群号反查 openid
-func (m *Map) GroupOpenIDByQqNumber(qqNumber int64) (string, error) {
+// OpenIDByNumber 按真实号码(群号 / QQ 号)反查 openid
+func (m *Map) OpenIDByNumber(kind Kind, number int64) (string, error) {
 	recs, err := m.app.FindRecordsByFilter(db.TableIDMap,
-		"bot = {:bot} && kind = 'group' && qq_number = {:num}", "", 1, 0,
-		dbx.Params{"bot": m.botID, "num": qqNumber},
+		"bot = {:bot} && kind = {:kind} && qq_number = {:num}", "", 1, 0,
+		dbx.Params{"bot": m.botID, "kind": string(kind), "num": number},
 	)
 	if err != nil {
 		return "", err
 	}
 	if len(recs) == 0 {
-		return "", errors.New("未找到该群号")
+		return "", errors.New("未找到该号码")
 	}
 	return recs[0].GetString("openid"), nil
 }

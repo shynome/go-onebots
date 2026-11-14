@@ -167,18 +167,18 @@ docker run -d --name onebots \
 `/app/pb_data` 是 PocketBase 数据目录（数据库、上传文件、S3 等全部设置都在这里），
 必须挂载出来，否则重建容器会丢失全部配置。首次启动后访问 `/_/` 创建管理员。
 
-## 使用真实群号
+## 使用真实群号 / QQ 号
 
-QQ 官方 API 只有 `group_openid`，不提供真实群号，所以需要手工填一次：
+QQ 官方 API 只给 openid，不提供群号和 QQ 号，所以需要手工填一次：
 
-1. 让机器人先在该群收到一条消息，后台 `onebot_id_map` 里会出现一条 `kind=group` 的记录
-2. 直接在这条记录的 `qq_number` 字段填上真实群号并保存
-3. 之后**收发统一用真实群号**：
-   - `send_group_msg` 的 `group_id` 传真实群号
-   - 事件里的 `group_id`、`get_group_list` / `get_group_info` 返回的也是真实群号
+1. 让机器人先收到该群或该用户的消息，后台 `onebot_id_map` 里会出现对应记录
+   （`kind=group` 是群，`kind=user` 是用户）
+2. 在记录的 `qq_number` 字段填上真实群号（群）或 QQ 号（用户）并保存
+3. 之后**收发统一用真实号码**：
+   - `send_group_msg` / `send_private_msg` 直接传真实号码
+   - 事件里的 `group_id` / `user_id`、`get_group_list` 返回的也是真实号码
 
-未填写时一切照旧（发送用映射 id，事件里是映射 id）。填写后映射 id 仍然可以作为
-`send_group_msg` 的参数使用，便于平滑过渡。
+未填写时一切照旧（用映射 id）。填写后映射 id 仍可作为发送参数，便于平滑过渡。
 
 > 历史事件里的 `group_id` 不会回溯修改，仍为绑定前的映射 id。
 

@@ -361,15 +361,18 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 
 	var userNum int64
 	if scene == "group" {
-		// 与入站事件保持一致: 已绑定真实群号的用群号
-		if n, ok := c.groupBinds()[openid]; ok {
+		// 与入站事件保持一致: 已填写真实号码的用真实号码
+		if n, ok := c.numberBinds(idmap.KindGroup)[openid]; ok {
 			ev.GroupID = n
 		} else if n, err := c.ids.Num(idmap.KindGroup, openid); err == nil {
 			ev.GroupID = n
 		}
-	} else if n, err := c.ids.Num(idmap.KindUser, openid); err == nil {
-		userNum = n
-		ev.UserID = n
+	} else {
+		if n, ok := c.numberBinds(idmap.KindUser)[openid]; ok {
+			userNum, ev.UserID = n, n
+		} else if n, err := c.ids.Num(idmap.KindUser, openid); err == nil {
+			userNum, ev.UserID = n, n
+		}
 	}
 
 	data, err := json.Marshal(ev)
