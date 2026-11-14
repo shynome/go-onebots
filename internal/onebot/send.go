@@ -109,8 +109,17 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 		case "text":
 			sb.WriteString(s.Data["text"])
 		case "at":
-			// 实测 QQ 发送侧不识别 <@openid> / <@all>, 会原样显示, 因此跳过
-			skipped = append(skipped, "at(官方不支持发送)")
+			qq := s.Data["qq"]
+			switch {
+			case scene != "group":
+				skipped = append(skipped, "at(私聊)")
+			case qq == "all":
+				// QQ 官方用这个标记 @全体, 需机器人为群管理员且同群每天一次
+				sb.WriteString("<qqbot-at-everyone />")
+			default:
+				// 单人的 @ 标记格式未找到官方说明, 先跳过
+				skipped = append(skipped, "at(仅支持 @全体)")
+			}
 		case "image", "record", "video", "file":
 			file := s.Data["file"]
 			if file == "" {
@@ -283,6 +292,29 @@ func verifyMediaURL(ctx context.Context, url string) error {
 		return fmt.Errorf("媒体链接返回 %d: %s", resp.StatusCode, body)
 	}
 	return nil
+}
+
+// acquireAtAll 占位当天的 @全体 配额, false 表示今天已用过
+func (c *BotContext) acquireAtAll(groupOpenID string) bool {
+	today := time.Now().Format("2006-01-02")
+
+	c.atAllMu.Lock()
+	defer c.atAllMu.Unlock()
+	if c.atAll == nil {
+		c.atAll = map[string]string{}
+	}
+	if c.atAll[groupOpenID] == today {
+		return false
+	}
+	c.atAll[groupOpenID] = today
+	return true
+}
+
+// releaseAtAll 发送失败时归还配额
+func (c *BotContext) releaseAtAll(groupOpenID string) {
+	c.atAllMu.Lock()
+	defer c.atAllMu.Unlock()
+	delete(c.atAll, groupOpenID)
 }
 
 // logSkipped 记录被忽略的消息段, 避免静默丢内容

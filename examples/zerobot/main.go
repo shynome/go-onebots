@@ -34,6 +34,11 @@ func main() {
 		ctx.DeleteMessage(mid)
 	})
 
+	// @全体成员, QQ 限制每群每天 1 次
+	zero.OnCommand("atall").Handle(func(ctx *zero.Ctx) {
+		ctx.Send("[CQ:at,qq=all] 全体成员测试")
+	})
+
 	url := os.Getenv("ONEBOT_WS")
 	if url == "" {
 		url = "ws://127.0.0.1:8090/onebot/v11/<botId>/ws"

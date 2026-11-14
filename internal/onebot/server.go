@@ -60,6 +60,7 @@ func (m *Manager) Get(botID string) *BotContext {
 		reply:     newReplyCtx(),
 		log:       eventlog.New(m.app, botID),
 		clients:   map[*wsClient]struct{}{},
+		atAll:     map[string]string{},
 		deliverCh: make(chan string, 1024),
 	}
 	c.restore()
@@ -95,6 +96,10 @@ type BotContext struct {
 	clientsMu sync.Mutex
 	clients   map[*wsClient]struct{}
 	pending   []pendingEvent
+
+	// atAll 记录每群当天是否已用过 @全体 配额
+	atAllMu sync.Mutex
+	atAll   map[string]string
 
 	deliverCh chan string
 }
@@ -587,8 +592,22 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, o
 		return failResponse(1400, "未知的 group_id: "+itoa(groupID)+", 需要先收到该群的消息才能发送")
 	}
 
+	hasAtAll := false
+	for _, ob := range out {
+		if strings.Contains(ob.content, "<qqbot-at-everyone") {
+			hasAtAll = true
+			break
+		}
+	}
+	if hasAtAll && !c.acquireAtAll(openid) {
+		return failResponse(1200, "QQ 限制每群每天只能 @全体成员 一次, 今天已用过")
+	}
+
 	res, err := c.sendOutbounds(ctx, b, "group", openid, out)
 	if err != nil {
+		if hasAtAll {
+			c.releaseAtAll(openid)
+		}
 		slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
 		return failResponse(1200, "发送失败: "+err.Error())
 	}
