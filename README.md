@@ -53,7 +53,7 @@
 - 拿不到群名、群成员列表、成员入群时间等资料（查询类 API 只能返回消息里见过的快照）
 - 机器人可以 **@全体成员**：content 里写 `<qqbot-at-everyone />`，需机器人为群管理员，
   且**每群每天 1 次**（服务端已加本地冷却）；但**无法 @ 单个成员**，官方未提供标记格式
-- 频道相关、`get_msg` 等未实现的 action 返回 `retcode=1404`
+- 频道相关、群管类（`set_group_ban` / `set_group_kick` / `get_forward_msg` 等）官方无接口，返回 `retcode=1404`
 
 ## 快速开始
 
@@ -101,6 +101,26 @@ ONEBOT_TOKEN=<onebot_token> go -C examples/zerobot run .
 go run ./cmd/obtest -url ws://127.0.0.1:8090/onebot/v11/<botId>/ws -token <onebot_token>
 ```
 
+## 构建与部署
+
+```bash
+make build     # 本地静态编译到 ./go-onebots（版本号取自 git describe）
+make docker    # 构建镜像 shynome/go-onebots:<版本>
+make push      # 推送镜像
+```
+
+容器运行：
+
+```bash
+docker run -d --name onebots \
+  -p 8090:8090 \
+  -v /opt/onebots/pb_data:/app/pb_data \
+  shynome/go-onebots:<版本>
+```
+
+`/app/pb_data` 是 PocketBase 数据目录（数据库、上传文件、S3 等全部设置都在这里），
+必须挂载出来，否则重建容器会丢失全部配置。首次启动后访问 `/_/` 创建管理员。
+
 ## 管理动作
 
 在 `qq_bots` 记录的 `do_action` 里选择：
@@ -115,10 +135,13 @@ go run ./cmd/obtest -url ws://127.0.0.1:8090/onebot/v11/<botId>/ws -token <onebo
 ```
 main.go                  PocketBase 启动入口
 bots.go                  机器人生命周期 hook + OneBot 路由挂载
+events_cleanup.go        事件表与中转媒体的定时清理
+Makefile / Dockerfile    构建与镜像
 db/                      表结构常量与 migration
 internal/qqbot/          QQ 官方 SDK（token / 网关 / 心跳 / 发消息）
 internal/idmap/          openid <-> int64 映射（PocketBase 持久化）
 internal/eventlog/       事件日志与未投递查询（离线补发）
+internal/outbox/         出站消息队列（先落库再发送，支持崩溃补发）
 internal/bot/            机器人运行时（连接、状态、事件分发）
 internal/onebot/         OneBot v11 协议层（握手、事件转换、action 分发）
 cmd/obtest/              OneBot 冒烟测试客户端
