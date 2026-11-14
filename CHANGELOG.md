@@ -1,13 +1,5 @@
 # Changelog
 
-## [0.3.3] - 2026-11-14
-
-### 修复
-
-- markdown 消息下后台 `content` 为空，不便排查：
-  - `onebot_outbox.content` 写入文本部分（文本+图片消息也能看到发的什么）
-  - `onebot_events.raw_message` 支持 markdown 段，文本+图片消息保留完整原始段
-
 ## [0.3.2] - 2026-11-14
 
 ### 修复
