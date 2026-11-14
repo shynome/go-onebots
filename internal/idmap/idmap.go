@@ -15,10 +15,9 @@ import (
 type Kind string
 
 const (
-	KindSelf    Kind = "self"
-	KindUser    Kind = "user"
-	KindGroup   Kind = "group"
-	KindMessage Kind = "message"
+	KindSelf  Kind = "self"
+	KindUser  Kind = "user"
+	KindGroup Kind = "group"
 )
 
 // baseNum 分配号段的起点, 避免和真实 QQ 号冲突
@@ -43,16 +42,111 @@ type Map struct {
 	byName map[openidKey]int64
 	byNum  map[numKey]string
 	extra  map[openidKey]string // 最近一次写入的 extra, 内容未变则跳过写库
+
+	msgByName map[string]int64
+	msgByNum  map[int64]string
 }
 
 func New(app core.App, botID string) *Map {
 	return &Map{
-		app:    app,
-		botID:  botID,
-		byName: map[openidKey]int64{},
-		byNum:  map[numKey]string{},
-		extra:  map[openidKey]string{},
+		app:       app,
+		botID:     botID,
+		byName:    map[openidKey]int64{},
+		byNum:     map[numKey]string{},
+		extra:     map[openidKey]string{},
+		msgByName: map[string]int64{},
+		msgByNum:  map[int64]string{},
 	}
+}
+
+// MessageNum 获取消息 id 对应的 int64, 不存在则分配
+func (m *Map) MessageNum(openid string, extra map[string]any) (int64, error) {
+	if openid == "" {
+		return 0, fmt.Errorf("消息 id 为空")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if n, ok := m.msgByName[openid]; ok {
+		return n, nil
+	}
+
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableMessageMap,
+		"bot = {:bot} && openid = {:openid}",
+		dbx.Params{"bot": m.botID, "openid": openid},
+	)
+	switch {
+	case err == nil:
+		n := int64(rec.GetFloat("num"))
+		m.rememberMsg(openid, n)
+		return n, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, err
+	}
+
+	var num int64
+	err = m.app.RunInTransaction(func(tx core.App) error {
+		recs, err := tx.FindRecordsByFilter(db.TableMessageMap, "bot = {:bot}", "-num", 1, 0,
+			dbx.Params{"bot": m.botID})
+		if err != nil {
+			return err
+		}
+		num = baseNum
+		if len(recs) > 0 {
+			num = int64(recs[0].GetFloat("num")) + 1
+		}
+
+		col, err := tx.FindCachedCollectionByNameOrId(db.TableMessageMap)
+		if err != nil {
+			return err
+		}
+		rec := core.NewRecord(col)
+		rec.Set("bot", m.botID)
+		rec.Set("openid", openid)
+		rec.Set("num", num)
+		if extra != nil {
+			rec.Set("extra", extra)
+		}
+		return tx.Save(rec)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	m.rememberMsg(openid, num)
+	return num, nil
+}
+
+// MessageOpenID 由 int64 反查消息 id
+func (m *Map) MessageOpenID(num int64) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if s, ok := m.msgByNum[num]; ok {
+		return s, nil
+	}
+
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableMessageMap,
+		"bot = {:bot} && num = {:num}",
+		dbx.Params{"bot": m.botID, "num": num},
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("找不到消息映射: %d", num)
+		}
+		return "", err
+	}
+	openid := rec.GetString("openid")
+	m.rememberMsg(openid, num)
+	return openid, nil
+}
+
+func (m *Map) rememberMsg(openid string, num int64) {
+	m.msgByName[openid] = num
+	m.msgByNum[num] = openid
 }
 
 // SetExtra 更新映射的附加信息(昵称/头像/角色等), 内容未变化时不写库

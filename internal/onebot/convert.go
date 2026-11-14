@@ -188,7 +188,7 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 		slog.Warn("分配用户 id 失败", "bot", c.botID, "error", err)
 		return
 	}
-	msgNum, err := c.ids.NumWithExtra(idmap.KindMessage, msg.ID, map[string]any{
+	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
 		"scene": "private", "target": openid,
 	})
 	if err != nil {
@@ -250,7 +250,7 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 		slog.Warn("分配群 id 失败", "bot", c.botID, "error", err)
 		return
 	}
-	msgNum, err := c.ids.NumWithExtra(idmap.KindMessage, msg.ID, map[string]any{
+	msgNum, err := c.ids.MessageNum(msg.ID, map[string]any{
 		"scene": "group", "target": msg.GroupOpenID,
 	})
 	if err != nil {

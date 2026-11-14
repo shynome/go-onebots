@@ -585,7 +585,7 @@ func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, 
 }
 
 func (c *BotContext) messageData(scene, target, messageID string) map[string]any {
-	num, err := c.ids.NumWithExtra(idmap.KindMessage, messageID, map[string]any{
+	num, err := c.ids.MessageNum(messageID, map[string]any{
 		"scene": scene, "target": target,
 	})
 	if err != nil {

@@ -8,6 +8,7 @@ require (
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.40.1
 	github.com/shynome/err0 v0.2.1
+	modernc.org/sqlite v1.57.0
 )
 
 require (
@@ -52,5 +53,4 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
-	modernc.org/sqlite v1.57.0 // indirect
 )

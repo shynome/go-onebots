@@ -27,21 +27,24 @@
 QQ 官方所有 id（用户、群、消息）都是字符串 openid，而 OneBot v11 要求 int64，
 并且**反向必须可还原**（发消息、撤回都要用 openid）。
 
-方案：PocketBase collection `onebot_id_map` 持久化自增分配。
+方案：PocketBase collection `onebot_id_map`（用户/群）与 `onebot_message_map`（消息）
+持久化自增分配。
 
 - 号段从 `10000000000` 开始，`MAX(num)+1` 在 `app.RunInTransaction` 内分配（sqlite 写串行，安全）
-- 唯一索引 `(bot, kind, openid)` 与 `(bot, kind, num)`
+- 唯一索引 `(bot, kind, openid)` 与 `(bot, kind, num)`（消息表为 `(bot, openid)` / `(bot, num)`）
 - 进程内加一层 `map` 缓存，PB 只在新 id 首次出现时写一次
 - 每机器人独立号段隔离，避免多机器人 id 互相变化
+- 消息映射数量级远大于用户/群，单独存表，避免撑大 id 映射表并拖慢 `MAX(num)`
 
-kind 取值：
+`onebot_id_map.kind` 取值：
 
 | kind | 含义 | 典型来源 |
 | --- | --- | --- |
 | `self` | 机器人自己 | WS READY `d.user.id` |
 | `user` | 用户 openid | 事件 `author.member_openid` / `author.user_openid` |
 | `group` | 群 openid | 事件 `group_openid` |
-| `message` | 消息 id | 事件 `id`，`extra` 记录归属目标用于撤回 |
+
+消息 id（事件 `id`）映射在 `onebot_message_map`，`extra` 记录归属目标用于后续撤回。
 
 ## 三、事件映射
 
@@ -183,12 +186,25 @@ MVP 只发送纯文本：
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | bot | relation → qq_bots | 按机器人生效 |
-| kind | select | `self` / `user` / `group` / `message` |
+| kind | select | `self` / `user` / `group` |
 | openid | text | 官方原始 id |
 | num | number(int) | 分配到的 int64 |
-| extra | json | 附加信息（消息归属目标等） |
+| extra | json | 附加信息（昵称 / 名片 / 角色 / 头像） |
 
 索引：`(bot, kind, openid)` 唯一，`(bot, kind, num)` 唯一。
+
+### 6.2.1 `onebot_message_map`（消息 id 映射）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| bot | relation → qq_bots | 按机器人生效 |
+| openid | text | 官方消息 id |
+| num | number(int) | 分配到的 int64 |
+| extra | json | `scene`（private/group）与 `target`，供撤回使用 |
+
+索引：`(bot, openid)` 唯一，`(bot, num)` 唯一。
+
+消息映射量级大，且与用户/群 ID 的生命周期不同，单独存储避免拖慢 id 映射操作。
 
 ### 6.3 `onebot_events`（事件日志 / 离线补发）
 
