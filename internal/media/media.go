@@ -46,7 +46,7 @@ func (s *Store) SavePath(botID, kind, localPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("读取本地文件失败: %w", err)
 	}
-	return s.save(botID, kind, f)
+	return s.save(botID, kind, f, nil)
 }
 
 // SaveBytes 保存内存数据, 返回可访问 URL
@@ -55,10 +55,57 @@ func (s *Store) SaveBytes(botID, kind, filename string, data []byte) (string, er
 	if err != nil {
 		return "", fmt.Errorf("构造文件失败: %w", err)
 	}
-	return s.save(botID, kind, f)
+	return s.save(botID, kind, f, nil)
 }
 
-func (s *Store) save(botID, kind string, f *filesystem.File) (string, error) {
+// Image 已中转的图片: URL 与尺寸
+type Image struct {
+	URL    string
+	Width  int
+	Height int
+}
+
+// FindImage 按来源查已中转的图片, 用于跨消息去重
+// 同一个图片链接只下载/转存一次
+func (s *Store) FindImage(botID, source string) (Image, bool, error) {
+	if source == "" {
+		return Image{}, false, nil
+	}
+	recs, err := s.app.FindRecordsByFilter(db.TableMedia,
+		"bot = {:bot} && source = {:source}", "-created", 1, 0,
+		dbx.Params{"bot": botID, "source": source},
+	)
+	if err != nil {
+		return Image{}, false, err
+	}
+	if len(recs) == 0 {
+		return Image{}, false, nil
+	}
+	url, err := s.recordURL(recs[0])
+	if err != nil {
+		return Image{}, false, err
+	}
+	return Image{
+		URL:    url,
+		Width:  recs[0].GetInt("width"),
+		Height: recs[0].GetInt("height"),
+	}, true, nil
+}
+
+// SaveImage 保存图片并记录来源与尺寸, 便于后续按来源去重
+func (s *Store) SaveImage(botID, source, filename string, data []byte, img Image) (string, error) {
+	f, err := filesystem.NewFileFromBytes(data, filename)
+	if err != nil {
+		return "", fmt.Errorf("构造文件失败: %w", err)
+	}
+	return s.save(botID, "image", f, map[string]any{
+		"source": source,
+		"width":  img.Width,
+		"height": img.Height,
+	})
+}
+
+func (s *Store) save(botID, kind string, f *filesystem.File, extra map[string]any) (string, error) {
 	if s.s3 == nil {
 		return "", fmt.Errorf("未配置 S3, 不支持发送图片等中转媒体; 请改用公网可访问的 URL 或在 PocketBase 设置里配置 S3")
 	}
@@ -74,6 +121,9 @@ func (s *Store) save(botID, kind string, f *filesystem.File) (string, error) {
 	// key 是 system 字段且带唯一索引, 保留写入唯一值
 	rec.Set("key", fmt.Sprintf("%s-%d", kind, time.Now().UnixNano()))
 	rec.Set("file", f)
+	for k, v := range extra {
+		rec.Set(k, v)
+	}
 
 	// PB 保存时会写入 S3, 删除记录时自动删除对象
 	if err := s.app.Save(rec); err != nil {

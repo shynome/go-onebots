@@ -314,6 +314,7 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 		req.Markdown = &qqbot.Markdown{Content: md}
 	} else if segs := outboxSegments(rec); len(segs) > 0 {
 		// 文本 + 图片: 发送时拼成 markdown(图片带尺寸)
+		// 图片本身按来源缓存在 onebot_media, 重试不会重复下载
 		md, err := c.markdownFromSegments(ctx, segs)
 		if err != nil {
 			return qqbot.SendResult{}, err

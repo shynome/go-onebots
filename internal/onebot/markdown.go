@@ -3,7 +3,9 @@ package onebot
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"image"
 
@@ -95,56 +97,67 @@ func (c *BotContext) downloadBytes(ctx context.Context, rawURL string) ([]byte, 
 	return data, nil
 }
 
+// imageSource 计算图片来源标识, 用于在 onebot_media 里跨消息去重
+// 公网 URL 直接用链接本身; 本地/base64 用内容 hash(内容可能变化)
+func imageSource(file string, data []byte) string {
+	if strings.HasPrefix(file, "http://") || strings.HasPrefix(file, "https://") {
+		return "url:" + file
+	}
+	if len(data) > 0 {
+		sum := sha256.Sum256(data)
+		return "sha256:" + hex.EncodeToString(sum[:])
+	}
+	return "file:" + file
+}
+
 // resolveImageForMarkdown 返回 markdown 可直接引用的图片 URL 与尺寸
-// 公网 URL 只需要额外下载一次读尺寸; 内网 / base64 / 本地文件转存到 S3
+// 同一个来源只会下载/转存一次, 命中 onebot_media 缓存后直接复用
 func (c *BotContext) resolveImageForMarkdown(ctx context.Context, file string) (string, int, int, error) {
+	store := media.New(c.mgr.app)
 	isRemote := strings.HasPrefix(file, "http://") || strings.HasPrefix(file, "https://")
 
-	// 内网 / 本地 / base64: 都得先拿到数据, 顺便读尺寸
-	switch {
-	case isRemote && needMirror(file):
-		data, err := c.downloadBytes(ctx, file)
-		if err != nil {
-			return "", 0, 0, fmt.Errorf("内网图片需要服务端本身能访问: %w", err)
+	// 公网链接可以只凭 URL 判断缓存, 连下载都不需要
+	if isRemote && !needMirror(file) {
+		if img, ok, err := store.FindImage(c.botID, "url:"+file); err == nil && ok {
+			return img.URL, img.Width, img.Height, nil
 		}
-		url, err := media.New(c.mgr.app).SaveBytes(c.botID, "image", "media"+extensionOf(data), data)
-		if err != nil {
-			return "", 0, 0, err
-		}
-		if err := verifyMediaURL(ctx, url); err != nil {
-			return "", 0, 0, err
-		}
-		w, h := imageSize(data)
-		return url, w, h, nil
+	}
 
+	// 其余情况先拿到原始数据(顺便用于内容 hash 与尺寸解析)
+	var data []byte
+	var err error
+	switch {
+	case isRemote:
+		data, err = c.downloadBytes(ctx, file)
+		if err != nil {
+			return "", 0, 0, fmt.Errorf("图片需要服务端本身能访问: %w", err)
+		}
 	case strings.HasPrefix(file, "base64://"):
-		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(file, "base64://"))
+		data, err = base64.StdEncoding.DecodeString(strings.TrimPrefix(file, "base64://"))
 		if err != nil {
 			return "", 0, 0, fmt.Errorf("base64 解码失败: %w", err)
 		}
-		url, err := media.New(c.mgr.app).SaveBytes(c.botID, "image", "media"+extensionOf(raw), raw)
-		if err != nil {
-			return "", 0, 0, err
-		}
-		w, h := imageSize(raw)
-		return url, w, h, verifyMediaURL(ctx, url)
-
 	default:
-		// 公网 URL 或本地文件
-		w, h := 0, 0
-		if isRemote {
-			if data, err := c.downloadBytes(ctx, file); err == nil {
-				w, h = imageSize(data)
-			}
-		} else if data, err := os.ReadFile(strings.TrimPrefix(file, "file://")); err == nil {
-			w, h = imageSize(data)
-		}
-		url, err := c.resolveMediaURL(ctx, mediaItem{kind: "image", file: file})
+		data, err = os.ReadFile(strings.TrimPrefix(file, "file://"))
 		if err != nil {
-			return "", 0, 0, err
+			return "", 0, 0, fmt.Errorf("读取本地图片失败(仅支持服务本机路径): %w", err)
 		}
-		return url, w, h, nil
 	}
+
+	source := imageSource(file, data)
+	if img, ok, ferr := store.FindImage(c.botID, source); ferr == nil && ok {
+		return img.URL, img.Width, img.Height, nil
+	}
+
+	w, h := imageSize(data)
+	url, err := store.SaveImage(c.botID, source, "media"+extensionOf(data), data, media.Image{Width: w, Height: h})
+	if err != nil {
+		return "", 0, 0, err
+	}
+	if err := verifyMediaURL(ctx, url); err != nil {
+		return "", 0, 0, err
+	}
+	return url, w, h, nil
 }
 
 // markdownEscaper 转义 markdown 特殊字符
@@ -182,8 +195,16 @@ func escapeMarkdown(s string) string {
 	return strings.Join(lines, "\n")
 }
 
+// resolvedImage 已解析的 markdown 图片
+type resolvedImage struct {
+	url  string
+	w, h int
+}
+
 // markdownFromSegments 把文本与图片按原顺序拼成 markdown
+// 同一条消息里重复的图片链接只会解析/下载一次
 func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (string, error) {
+	cache := make(map[string]resolvedImage, len(segs))
 	var sb strings.Builder
 	for _, s := range segs {
 		switch s.Type {
@@ -197,11 +218,16 @@ func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (
 			if file == "" {
 				continue
 			}
-			url, w, h, err := c.resolveImageForMarkdown(ctx, file)
-			if err != nil {
-				return "", err
+			img, ok := cache[file]
+			if !ok {
+				url, w, h, err := c.resolveImageForMarkdown(ctx, file)
+				if err != nil {
+					return "", err
+				}
+				img = resolvedImage{url: url, w: w, h: h}
+				cache[file] = img
 			}
-			sb.WriteString(markdownImage(w, h, url))
+			sb.WriteString(markdownImage(img.w, img.h, img.url))
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
