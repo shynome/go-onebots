@@ -92,8 +92,8 @@ GET  http://<host>:8090/<action>?key=value
 POST http://<host>:8090/<action>          # JSON / urlencoded / query 均可
 ```
 
-机器人按 `access_token` 反查；未配置 token 且只有一个启用中的机器人时直接命中。
-多机器人场景可以用显式路径指定：
+机器人按 `access_token` 反查，所以标准接口**必须提供 token**（在 `qq_bots` 的
+`onebot_token` 里配置）。多机器人场景可以用显式路径指定，无需 token 反查：
 
 ```
 POST http://<host>:8090/onebot/v11/<botId>/<action>
@@ -104,7 +104,7 @@ POST http://<host>:8090/onebot/v11/<botId>/<action>
 | 状态码 | 含义 |
 | --- | --- |
 | 200 | 请求已处理，成功与否看响应体 `retcode` |
-| 401 | 机器人配了 token，但请求未提供 |
+| 401 | 未提供 `access_token`（或指定路径下机器人配了 token 但请求未带） |
 | 403 | 提供了 token 但不匹配 |
 | 404 | action 不存在 |
 

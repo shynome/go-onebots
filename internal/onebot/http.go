@@ -105,35 +105,25 @@ func (m *Manager) ServeHTTP(e *core.RequestEvent) error {
 }
 
 // resolveBotByToken 根据 access_token 反查机器人
-// 多机器人时必须靠 token 区分, 否则只能退化为"唯一启用的机器人"
+// 标准接口没有 botId, 必须靠 token 定位
 func (m *Manager) resolveBotByToken(token string) (string, error) {
-	if token != "" {
-		recs, err := m.app.FindRecordsByFilter(db.TableQQBots,
-			"onebot_token = {:token}", "", 2, 0, dbx.Params{"token": token})
-		if err != nil {
-			return "", err
-		}
-		switch len(recs) {
-		case 1:
-			return recs[0].Id, nil
-		case 0:
-			return "", errors.New("access_token 无效")
-		default:
-			return "", errors.New("access_token 对应多个机器人, 请改用 /onebot/v11/{botId}/{action}")
-		}
+	if token == "" {
+		return "", errors.New("缺少 access_token")
 	}
 
-	// 未带 token 时, 只允许命中"唯一启用且本身没配 token"的机器人
-	// 配了 token 的机器人必须显式提供 token, 否则等于没校验
 	recs, err := m.app.FindRecordsByFilter(db.TableQQBots,
-		"enabled = true && onebot_token = ''", "", 2, 0)
+		"onebot_token = {:token}", "", 2, 0, dbx.Params{"token": token})
 	if err != nil {
 		return "", err
 	}
-	if len(recs) != 1 {
-		return "", errors.New("未提供 access_token, 无法确定机器人; 请带上 token 或改用 /onebot/v11/{botId}/{action}")
+	switch len(recs) {
+	case 1:
+		return recs[0].Id, nil
+	case 0:
+		return "", errors.New("access_token 无效")
+	default:
+		return "", errors.New("access_token 对应多个机器人, 请改用 /onebot/v11/{botId}/{action}")
 	}
-	return recs[0].Id, nil
 }
 
 // paramsFromRequest 按规范和请求形态组装 params
