@@ -25,6 +25,9 @@
 超出 QQ 被动回复窗口（5 分钟）的消息补发后插件可能发不出回复，但可以在后台按
 `delivered = false` 查到。
 
+**历史清理**：`onebot_events` 按 PocketBase 的 `Settings → Logs → Max days` 定期清理
+（每天 03:30，启动时也会先清一次），无需单独配置。
+
 **限制（QQ 官方 API 本身）**
 
 - 群聊只能收到 @ 机器人的消息，拿不到全量群消息

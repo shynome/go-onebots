@@ -16,6 +16,7 @@ func main() {
 	onebot.Version = Version
 	mgr := onebot.NewManager(app)
 	initBots(app, mgr)
+	initEventsCleanup(app)
 
 	try.To(app.Start())
 }
