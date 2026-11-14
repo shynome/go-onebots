@@ -47,10 +47,4 @@ func initEventsCleanup(app core.App) {
 	if err := app.Cron().Add("cleanup_onebot_events", eventsCleanupCron, cleanup); err != nil {
 		slog.Error("注册事件清理任务失败", "error", err)
 	}
-
-	// 启动时先清一次, 避免长期停机后积压
-	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		go cleanup()
-		return e.Next()
-	})
 }

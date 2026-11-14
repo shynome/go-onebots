@@ -26,7 +26,7 @@
 `delivered = false` 查到。
 
 **历史清理**：`onebot_events` 按 PocketBase 的 `Settings → Logs → Max days` 定期清理
-（每天 03:30，启动时也会先清一次），无需单独配置。
+（每天 03:30），无需单独配置。
 
 **限制（QQ 官方 API 本身）**
 
