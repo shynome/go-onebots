@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.12] - 2026-11-14
+
+### 修复
+
+- 机器人自己发出的消息回流成入站事件时直接跳过，不再重复记入 `onebot_events`、
+  不再推给 OneBot 客户端，也不再污染被动回复上下文
+  - 现象：发送报 `40034005 回复消息msg_id已过期`，因为 `replyCtx` 里存的是
+    机器人自己消息的 `msg_id`，QQ 不认
+  - 判定方式是查 `onebot_message_map` 里是否登记过该 `message_id`：
+    QQ 的 `author` 没有 bot 标记，群里自己消息的 `member_openid` 与 READY
+    拿到的 self openid 也不相同，这两条路都走不通
+
 ## [0.3.11] - 2026-11-14
 
 ### 变更

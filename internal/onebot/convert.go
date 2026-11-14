@@ -164,10 +164,22 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 	}
 }
 
+// isSelfMessage 判断这条 QQ 消息是不是机器人自己发出去后回流的
+// Author 里没有 bot 标记, 自己的 openid 在群里也与 READY 拿到的不同,
+// 所以用「发送成功时登记过的 message_id」来判定
+func (c *BotContext) isSelfMessage(messageID string) bool {
+	return c.ids.HasMessage(messageID)
+}
+
 func (c *BotContext) handleC2C(data json.RawMessage) {
 	var msg qqbot.C2CMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		c.logger.Warn("解析单聊消息失败", "bot", c.botID, "error", err)
+		return
+	}
+	// 机器人自己发的消息会作为入站事件回流, 不能当成用户消息
+	if c.isSelfMessage(msg.ID) {
+		c.logger.Debug("跳过机器人自己发的单聊消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 	if !c.firstSeen(msg.ID) {
@@ -229,6 +241,12 @@ func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 	var msg qqbot.GroupATMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		c.logger.Warn("解析群消息失败", "bot", c.botID, "error", err)
+		return
+	}
+	// 机器人自己发的消息会作为 GROUP_MESSAGE_CREATE 回流:
+	// 既不能当入站事件(会重复记录并推给客户端), 也不能拿它的 msg_id 做被动回复
+	if c.isSelfMessage(msg.ID) {
+		c.logger.Debug("跳过机器人自己发的群消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 	if !c.firstSeen(msg.ID) {

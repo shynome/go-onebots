@@ -59,6 +59,30 @@ func New(app core.App, botID string) *Map {
 	}
 }
 
+// HasMessage 判断该 QQ 消息 id 是否已被本机器人登记过
+// 发送成功时 recordSent 会登记, 所以命中说明是自己发出去的消息又回流了
+func (m *Map) HasMessage(openid string) bool {
+	if openid == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.msgByName[openid]; ok {
+		return true
+	}
+	rec, err := m.app.FindFirstRecordByFilter(
+		db.TableMessageMap,
+		"bot = {:bot} && openid = {:openid}",
+		dbx.Params{"bot": m.botID, "openid": openid},
+	)
+	if err != nil || rec == nil {
+		return false
+	}
+	m.rememberMsg(openid, int64(rec.GetFloat("num")))
+	return true
+}
+
 // MessageNum 获取消息 id 对应的 int64, 不存在则分配
 func (m *Map) MessageNum(openid string, extra map[string]any) (int64, error) {
 	if openid == "" {
