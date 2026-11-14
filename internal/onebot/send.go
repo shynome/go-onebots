@@ -15,6 +15,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/media"
@@ -231,7 +232,11 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 			return "", fmt.Errorf("base64 解码失败: %w", err)
 		}
 		ct, body := detectContentType(bytes.NewReader(raw), "")
-		return c.uploadToS3(ctx, m.kind, "", ct, body, int64(len(raw)))
+		url, err := c.uploadToS3(ctx, m.kind, "", ct, body, int64(len(raw)))
+		if err != nil {
+			return "", err
+		}
+		return url, verifyMediaURL(ctx, url)
 
 	default:
 		localPath := strings.TrimPrefix(file, "file://")
@@ -246,8 +251,36 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 			return "", err
 		}
 		ct, body := detectContentType(f, localPath)
-		return c.uploadToS3(ctx, m.kind, localPath, ct, body, st.Size())
+		url, err := c.uploadToS3(ctx, m.kind, localPath, ct, body, st.Size())
+		if err != nil {
+			return "", err
+		}
+		return url, verifyMediaURL(ctx, url)
 	}
+}
+
+// verifyMediaURL 确认中转后的链接真的可下载, 否则 QQ 只会返回 40093007
+func verifyMediaURL(ctx context.Context, url string) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Range", "bytes=0-0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("媒体链接不可访问: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return fmt.Errorf("媒体链接返回 %d: %s", resp.StatusCode, body)
+	}
+	return nil
 }
 
 func (c *BotContext) uploadToS3(ctx context.Context, kind, filename, contentType string, r io.Reader, size int64) (string, error) {
