@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.7] - 2026-11-14
+
+### 新增
+
+- **`@全体` 备用端**：主端（QQ 官方 API）因机器人无管理员权限或该群当日已达上限
+  被拒时，去掉 `at` 段正常发出图文后，再由备用 OneBot 实现补发一条只有 `@全体` 的消息
+  - 新表 `onebot_at_fallback`（`base_url` / `access_token`），在 `onebot_id_map`
+    的群记录上用 `at_fallback` 字段选用，需该群已填 `qq_number` 才会触发
+  - 新增 `internal/atall` 包，只做 `POST /send_group_msg` 这一件事
+
+### 变更
+
+- 日志改用 PocketBase 的 `app.Logger()`，写入 `_logs` 表供后台查看
+  - `qqbot.Client` 新增可选 `Config.Logger`，未注入时退回 `slog.Default()`
+  - 注意：`Debug` 级别是否落库取决于后台日志级别设置
+
 ## [0.3.6] - 2026-11-14
 
 ### 新增
