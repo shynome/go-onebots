@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/shynome/go-onebots/db"
+	"github.com/shynome/go-onebots/internal/media"
 )
 
 const (
@@ -36,15 +38,33 @@ func initEventsCleanup(app core.App) {
 			Execute()
 		if err != nil {
 			slog.Error("清理事件表失败", "error", err)
-			return
-		}
-		affected, _ := res.RowsAffected()
-		if affected > 0 {
+		} else if affected, _ := res.RowsAffected(); affected > 0 {
 			slog.Info("已清理过期事件", "deleted", affected, "retention_days", days)
 		}
+
+		cleanupMedia(app, days)
 	}
 
 	if err := app.Cron().Add("cleanup_onebot_events", eventsCleanupCron, cleanup); err != nil {
 		slog.Error("注册事件清理任务失败", "error", err)
+	}
+}
+
+// cleanupMedia 清理过期中转媒体, S3 未启用时跳过
+func cleanupMedia(app core.App, days int) {
+	store, err := media.New(app)
+	if err != nil {
+		slog.Debug("跳过媒体清理", "reason", err)
+		return
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -days)
+	files, records, err := store.Cleanup(context.Background(), cutoff, 200)
+	if err != nil {
+		slog.Error("清理中转媒体失败", "error", err, "files", files, "records", records)
+		return
+	}
+	if files > 0 || records > 0 {
+		slog.Info("已清理过期媒体", "files", files, "records", records, "retention_days", days)
 	}
 }

@@ -7,4 +7,6 @@ const (
 	TableIDMap = "onebot_id_map"
 	// TableEvents OneBot 事件日志, 用于离线补发与后台查看
 	TableEvents = "onebot_events"
+	// TableMedia 富媒体中转记录
+	TableMedia = "onebot_media"
 )

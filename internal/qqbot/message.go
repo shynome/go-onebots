@@ -10,14 +10,22 @@ import (
 type MsgType int
 
 const (
-	MsgTypeText MsgType = 0 // 纯文本
+	MsgTypeText  MsgType = 0 // 纯文本
+	MsgTypeMedia MsgType = 7 // 富媒体
 )
+
+// Media 富媒体内容, 由上传接口返回的 file_info 构造
+type Media struct {
+	FileInfo string `json:"file_info"`
+}
 
 // SendMessageRequest 发送消息请求体
 // https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/send-receive/send.html
 type SendMessageRequest struct {
 	Content string  `json:"content"`
 	MsgType MsgType `json:"msg_type"`
+	// Media msg_type=7 时使用的富媒体内容
+	Media *Media `json:"media,omitempty"`
 	// MsgID 被动回复所对应的事件消息 id, 5 分钟内有效
 	MsgID string `json:"msg_id,omitempty"`
 	// MsgSeq 被动回复序号, 同一条被动消息最多 5 次

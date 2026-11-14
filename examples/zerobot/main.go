@@ -6,11 +6,26 @@ import (
 
 	zero "github.com/wdvxdr1123/ZeroBot"
 	"github.com/wdvxdr1123/ZeroBot/driver"
+	"github.com/wdvxdr1123/ZeroBot/message"
 )
 
 func main() {
 	zero.OnCommand("hello").Handle(func(ctx *zero.Ctx) {
 		ctx.Send("world")
+	})
+
+	// 本地文件 -> S3 中转 -> 预签名 URL
+	zero.OnCommand("pic").Handle(func(ctx *zero.Ctx) {
+		ctx.Send(message.Message{
+			message.Image("file:///tmp/onebots-test.png"),
+		})
+	})
+
+	// 公网 URL -> 直接透传给 QQ
+	zero.OnCommand("picurl").Handle(func(ctx *zero.Ctx) {
+		ctx.Send(message.Message{
+			message.Image("https://q1.qlogo.cn/g?b=qq&nk=10001&s=640"),
+		})
 	})
 
 	url := os.Getenv("ONEBOT_WS")

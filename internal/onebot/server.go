@@ -17,7 +17,6 @@ import (
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
-	"github.com/shynome/go-onebots/internal/qqbot"
 )
 
 // Version 由 main 注入
@@ -527,50 +526,44 @@ func (c *BotContext) handleAction(ctx context.Context, action string, raw json.R
 }
 
 func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string, p sendParams) actionResponse {
-	text, skipped := ExtractText(p.Message)
-	if len(skipped) > 0 {
-		slog.Warn("跳过不支持的消息段", "bot", c.botID, "segments", skipped)
+	segs, err := ParseSegments(p.Message)
+	if err != nil {
+		return failResponse(1400, "message 解析失败: "+err.Error())
 	}
-	if strings.TrimSpace(text) == "" {
+	out, skipped := buildOutbounds(segs)
+	logSkipped(c.botID, skipped)
+	if len(out) == 0 {
 		return failResponse(1400, "消息内容为空或只包含不支持的段")
 	}
 
+	scene := p.MessageType
 	switch action {
 	case "send_group_msg":
-		return c.sendGroup(ctx, b, p.GroupID, text)
+		scene = "group"
 	case "send_private_msg":
-		return c.sendPrivate(ctx, b, p.UserID, text)
+		scene = "private"
 	case "send_msg":
-		if p.MessageType == "" || (p.MessageType != "group" && p.MessageType != "private") {
+		if scene != "group" && scene != "private" {
 			if p.GroupID != 0 {
-				p.MessageType = "group"
+				scene = "group"
 			} else {
-				p.MessageType = "private"
+				scene = "private"
 			}
 		}
-		if p.MessageType == "group" {
-			return c.sendGroup(ctx, b, p.GroupID, text)
-		}
-		return c.sendPrivate(ctx, b, p.UserID, text)
 	}
-	return failResponse(1404, "不支持的发送方式: "+action)
+
+	if scene == "group" {
+		return c.sendGroup(ctx, b, p.GroupID, out)
+	}
+	return c.sendPrivate(ctx, b, p.UserID, out)
 }
 
-func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, text string) actionResponse {
+func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindGroup, groupID)
 	if err != nil {
 		return failResponse(1400, "未知的 group_id: "+itoa(groupID)+", 需要先收到该群的消息才能发送")
 	}
-	msgID, seq := c.reply.Next("group", openid)
-	if msgID == "" {
-		slog.Warn("被动回复窗口已过期, 尝试发送主动消息", "bot", c.botID, "group", openid)
-	}
-	res, err := b.Client().SendGroupMessage(ctx, openid, qqbot.SendMessageRequest{
-		Content: text,
-		MsgType: qqbot.MsgTypeText,
-		MsgID:   msgID,
-		MsgSeq:  seq,
-	})
+	res, err := c.sendOutbounds(ctx, b, "group", openid, out)
 	if err != nil {
 		slog.Warn("发送群消息失败", "bot", c.botID, "group", openid, "error", err)
 		return failResponse(1200, "发送失败: "+err.Error())
@@ -578,21 +571,12 @@ func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, t
 	return okResponse(c.messageData("group", openid, res.ID))
 }
 
-func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, text string) actionResponse {
+func (c *BotContext) sendPrivate(ctx context.Context, b *bot.Bot, userID int64, out []outbound) actionResponse {
 	openid, err := c.ids.OpenID(idmap.KindUser, userID)
 	if err != nil {
 		return failResponse(1400, "未知的 user_id: "+itoa(userID)+", 需要先收到该用户的消息才能发送")
 	}
-	msgID, seq := c.reply.Next("private", openid)
-	if msgID == "" {
-		slog.Warn("被动回复窗口已过期, 尝试发送主动消息", "bot", c.botID, "user", openid)
-	}
-	res, err := b.Client().SendUserMessage(ctx, openid, qqbot.SendMessageRequest{
-		Content: text,
-		MsgType: qqbot.MsgTypeText,
-		MsgID:   msgID,
-		MsgSeq:  seq,
-	})
+	res, err := c.sendOutbounds(ctx, b, "private", openid, out)
 	if err != nil {
 		slog.Warn("发送单聊消息失败", "bot", c.botID, "user", openid, "error", err)
 		return failResponse(1200, "发送失败: "+err.Error())
