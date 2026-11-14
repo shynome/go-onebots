@@ -1,8 +1,6 @@
 package onebot
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,8 +9,6 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"os"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -218,7 +214,7 @@ func (c *BotContext) sendQQMessage(ctx context.Context, b *bot.Bot, scene, openi
 }
 
 // resolveMediaURL 把消息段里的媒体来源转成 QQ 可访问的 URL
-// 公网 URL 直接透传, base64 / 本地文件先上传 S3 再给预签名链接
+// 公网 URL 直接透传, base64 / 本地文件存进 PocketBase 后返回 /api/files 链接
 func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, error) {
 	file := m.file
 
@@ -231,8 +227,8 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 		if err != nil {
 			return "", fmt.Errorf("base64 解码失败: %w", err)
 		}
-		ct, body := detectContentType(bytes.NewReader(raw), "")
-		url, err := c.uploadToS3(ctx, m.kind, "", ct, body, int64(len(raw)))
+		name := "media" + extensionOf(raw)
+		url, err := media.New(c.mgr.app).SaveBytes(c.botID, m.kind, name, raw)
 		if err != nil {
 			return "", err
 		}
@@ -240,23 +236,25 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 
 	default:
 		localPath := strings.TrimPrefix(file, "file://")
-		f, err := os.Open(localPath)
+		url, err := media.New(c.mgr.app).SavePath(c.botID, m.kind, localPath)
 		if err != nil {
-			return "", fmt.Errorf("打开本地文件失败(仅支持服务本机路径): %w", err)
-		}
-		defer f.Close()
-
-		st, err := f.Stat()
-		if err != nil {
-			return "", err
-		}
-		ct, body := detectContentType(f, localPath)
-		url, err := c.uploadToS3(ctx, m.kind, localPath, ct, body, st.Size())
-		if err != nil {
-			return "", err
+			return "", fmt.Errorf("保存本地媒体失败(仅支持服务本机路径): %w", err)
 		}
 		return url, verifyMediaURL(ctx, url)
 	}
+}
+
+// extensionOf 根据文件头推断扩展名, PocketBase 会用文件名后缀判断 MIME
+func extensionOf(data []byte) string {
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	ct := http.DetectContentType(head)
+	if exts, err := mime.ExtensionsByType(ct); err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	return ".bin"
 }
 
 // verifyMediaURL 确认中转后的链接真的可下载, 否则 QQ 只会返回 40093007
@@ -281,28 +279,6 @@ func verifyMediaURL(ctx context.Context, url string) error {
 		return fmt.Errorf("媒体链接返回 %d: %s", resp.StatusCode, body)
 	}
 	return nil
-}
-
-func (c *BotContext) uploadToS3(ctx context.Context, kind, filename, contentType string, r io.Reader, size int64) (string, error) {
-	store, err := media.New(c.mgr.app)
-	if err != nil {
-		return "", fmt.Errorf("S3 不可用, 无法中转媒体: %w", err)
-	}
-	return store.Save(ctx, c.botID, kind, filename, contentType, r, size)
-}
-
-// detectContentType 通过文件头判断 MIME, 失败时回退到扩展名
-func detectContentType(r io.Reader, filename string) (string, io.Reader) {
-	br := bufio.NewReader(r)
-	head, _ := br.Peek(512)
-
-	ct := http.DetectContentType(head)
-	if ct == "application/octet-stream" && filename != "" {
-		if byExt := mime.TypeByExtension(path.Ext(filename)); byExt != "" {
-			ct = byExt
-		}
-	}
-	return ct, br
 }
 
 // logSkipped 记录被忽略的消息段, 避免静默丢内容

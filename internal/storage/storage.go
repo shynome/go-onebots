@@ -4,7 +4,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -56,16 +55,6 @@ func New(app core.App) (*S3, error) {
 	return &S3{cli: cli, bucket: cfg.Bucket}, nil
 }
 
-func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) error {
-	_, err := s.cli.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{
-		ContentType: contentType,
-	})
-	if err != nil {
-		return fmt.Errorf("上传 S3 失败: %w", err)
-	}
-	return nil
-}
-
 // PresignGet 生成下载链接, 超过 7 天会被截断(SigV4 限制)
 func (s *S3) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	if expiry <= 0 || expiry > maxPresignExpiry {
@@ -78,20 +67,17 @@ func (s *S3) PresignGet(ctx context.Context, key string, expiry time.Duration) (
 	return u.String(), nil
 }
 
-func (s *S3) Remove(ctx context.Context, keys []string) error {
-	if len(keys) == 0 {
-		return nil
-	}
-	ch := make(chan minio.ObjectInfo, len(keys))
-	for _, k := range keys {
-		ch <- minio.ObjectInfo{Key: k}
-	}
-	close(ch)
-
-	for obj := range s.cli.RemoveObjects(ctx, s.bucket, ch, minio.RemoveObjectsOptions{}) {
+// List 列出前缀下的对象 key, 用于诊断
+func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	for obj := range s.cli.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
 		if obj.Err != nil {
-			return fmt.Errorf("删除 S3 对象 %s 失败: %w", obj.ObjectName, obj.Err)
+			return keys, obj.Err
 		}
+		keys = append(keys, obj.Key)
 	}
-	return nil
+	return keys, nil
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
@@ -50,21 +49,16 @@ func initEventsCleanup(app core.App) {
 	}
 }
 
-// cleanupMedia 清理过期中转媒体, S3 未启用时跳过
+// cleanupMedia 清理过期中转媒体, 关联文件由 PocketBase 自动删除
 func cleanupMedia(app core.App, days int) {
-	store, err := media.New(app)
-	if err != nil {
-		slog.Debug("跳过媒体清理", "reason", err)
-		return
-	}
-
+	store := media.New(app)
 	cutoff := time.Now().AddDate(0, 0, -days)
-	files, records, err := store.Cleanup(context.Background(), cutoff, 200)
+	deleted, err := store.Cleanup(cutoff, 200)
 	if err != nil {
-		slog.Error("清理中转媒体失败", "error", err, "files", files, "records", records)
+		slog.Error("清理中转媒体失败", "error", err, "deleted", deleted)
 		return
 	}
-	if files > 0 || records > 0 {
-		slog.Info("已清理过期媒体", "files", files, "records", records, "retention_days", days)
+	if deleted > 0 {
+		slog.Info("已清理过期媒体", "deleted", deleted, "retention_days", days)
 	}
 }
