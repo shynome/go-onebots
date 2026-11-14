@@ -10,8 +10,9 @@ import (
 type MsgType int
 
 const (
-	MsgTypeText  MsgType = 0 // 纯文本
-	MsgTypeMedia MsgType = 7 // 富媒体
+	MsgTypeText     MsgType = 0 // 纯文本
+	MsgTypeMarkdown MsgType = 2 // markdown(图文混排)
+	MsgTypeMedia    MsgType = 7 // 富媒体
 )
 
 // Media 富媒体内容, 由上传接口返回的 file_info 构造
@@ -19,11 +20,19 @@ type Media struct {
 	FileInfo string `json:"file_info"`
 }
 
+// Markdown markdown 消息内容
+// 图片用 ![text #宽px #高px](url) 引用公网资源, 开放平台会自行下载转存
+type Markdown struct {
+	Content string `json:"content,omitempty"`
+}
+
 // SendMessageRequest 发送消息请求体
 // https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/send-receive/send.html
 type SendMessageRequest struct {
-	Content string  `json:"content"`
+	Content string  `json:"content,omitempty"`
 	MsgType MsgType `json:"msg_type"`
+	// Markdown msg_type=2 时使用, 可图文混排并控制顺序
+	Markdown *Markdown `json:"markdown,omitempty"`
 	// Media msg_type=7 时使用的富媒体内容
 	Media *Media `json:"media,omitempty"`
 	// MsgID 被动回复所对应的事件消息 id, 5 分钟内有效

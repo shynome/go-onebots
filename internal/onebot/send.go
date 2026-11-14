@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
@@ -36,8 +37,10 @@ type mediaItem struct {
 }
 
 type outbound struct {
-	content string
-	media   *mediaItem
+	content  string
+	markdown string    // 非空表示直接作为 markdown 发送(msg_type=2)
+	segments []Segment // 非空表示发送时拼成 markdown(文本+图片保序)
+	media    *mediaItem
 }
 
 // ParseSegments 解析 OneBot 的 message 参数, 支持段数组 / 单段 / CQ 码字符串
@@ -112,11 +115,15 @@ func parseCQString(s string) []Segment {
 func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outbound, skipped []string) {
 	var sb strings.Builder
 	var medias []mediaItem
+	var markdown string
 
 	for _, s := range segs {
 		switch s.Type {
 		case "text":
 			sb.WriteString(s.Data["text"])
+		case "markdown":
+			// 显式 markdown 段: 原样交给 QQ, 用于图文混排
+			markdown = s.Data["content"]
 		case "at":
 			qq := s.Data["qq"]
 			switch {
@@ -145,11 +152,22 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	}
 
 	text := strings.TrimSpace(sb.String())
+	if markdown != "" {
+		out = append(out, outbound{markdown: markdown})
+		return out, skipped
+	}
 	if len(medias) == 0 {
 		if text != "" {
 			out = append(out, outbound{content: text})
 		}
 		return out, skipped
+	}
+
+	// 文本 + 纯图片: 改用 markdown, 否则 QQ 富媒体消息固定把图片排在文字前面
+	if text != "" && onlyImages(medias) {
+		if mdSegs := markdownTextSegments(segs); len(mdSegs) > 1 {
+			return []outbound{{segments: mdSegs}}, skipped
+		}
 	}
 
 	out = append(out, outbound{content: text, media: &medias[0]})
@@ -163,7 +181,6 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	}
 	return out, skipped
 }
-
 func fileTypeOf(kind string) qqbot.FileType {
 	switch kind {
 	case "image":
@@ -219,10 +236,16 @@ func (c *BotContext) sendOutbounds(ctx context.Context, b *bot.Bot, scene, openi
 
 func (c *BotContext) enqueueOutbound(scene, openid string, ob outbound) (*core.Record, error) {
 	it := outbox.Item{
-		BotID:   c.botID,
-		Scene:   scene,
-		Target:  openid,
-		Content: ob.content,
+		BotID:    c.botID,
+		Scene:    scene,
+		Target:   openid,
+		Content:  ob.content,
+		Markdown: ob.markdown,
+	}
+	if len(ob.segments) > 0 {
+		if data, err := json.Marshal(ob.segments); err == nil {
+			it.Segments = data
+		}
 	}
 	if ob.media != nil {
 		it.MediaKind = ob.media.kind
@@ -284,7 +307,21 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 		Content: rec.GetString("content"),
 	}
 
-	if m != nil {
+	// markdown 消息: 图文混排, 图片顺序由 content 决定
+	if md := rec.GetString("markdown"); md != "" {
+		req.MsgType = qqbot.MsgTypeMarkdown
+		req.Content = ""
+		req.Markdown = &qqbot.Markdown{Content: md}
+	} else if segs := outboxSegments(rec); len(segs) > 0 {
+		// 文本 + 图片: 发送时拼成 markdown(图片带尺寸)
+		md, err := c.markdownFromSegments(ctx, segs)
+		if err != nil {
+			return qqbot.SendResult{}, err
+		}
+		req.MsgType = qqbot.MsgTypeMarkdown
+		req.Content = ""
+		req.Markdown = &qqbot.Markdown{Content: md}
+	} else if m != nil {
 		fileURL, err := c.resolveMediaURL(ctx, *m)
 		if err != nil {
 			return qqbot.SendResult{}, err
@@ -316,6 +353,24 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 	return c.sendQQMessage(ctx, b, scene, openid, req)
 }
 
+// outboxSegments 取出待拼 markdown 的原始段
+func outboxSegments(rec *core.Record) []Segment {
+	raw, _ := rec.Get("segments").(types.JSONRaw)
+	if len(raw) == 0 {
+		if v, ok := rec.Get("segments").(string); ok {
+			raw = types.JSONRaw(v)
+		}
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	var segs []Segment
+	if err := json.Unmarshal(raw, &segs); err != nil {
+		return nil
+	}
+	return segs
+}
+
 // recordSent 把机器人自己发出的消息写进事件日志
 // 直接标记为已投递, 不会补发给客户端, 仅供 get_msg 与群历史查询使用
 func (c *BotContext) recordSent(rec *core.Record, messageID string) {
@@ -339,11 +394,15 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 	}
 
 	segs := make([]Segment, 0, 2)
-	if ob.content != "" {
-		segs = append(segs, textSegment(ob.content))
-	}
-	if ob.media != nil {
-		segs = append(segs, Segment{Type: ob.media.kind, Data: map[string]string{"file": ob.media.file}})
+	if md := rec.GetString("markdown"); md != "" {
+		segs = append(segs, Segment{Type: "markdown", Data: map[string]string{"content": md}})
+	} else {
+		if ob.content != "" {
+			segs = append(segs, textSegment(ob.content))
+		}
+		if ob.media != nil {
+			segs = append(segs, Segment{Type: ob.media.kind, Data: map[string]string{"file": ob.media.file}})
+		}
 	}
 
 	selfNum, selfName := c.self()

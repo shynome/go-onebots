@@ -34,6 +34,8 @@ type Item struct {
 	Scene     string
 	Target    string
 	Content   string
+	Markdown  string
+	Segments  []byte // 非空时按 markdown 发送: 文本与图片按原顺序拼接
 	MediaKind string
 	MediaFile string
 	MediaURL  string
@@ -52,6 +54,10 @@ func (s *Store) Enqueue(it Item) (*core.Record, error) {
 	r.Set("scene", it.Scene)
 	r.Set("target", it.Target)
 	r.Set("content", it.Content)
+	r.Set("markdown", it.Markdown)
+	if len(it.Segments) > 0 {
+		r.Set("segments", types.JSONRaw(it.Segments))
+	}
 	r.Set("media_kind", it.MediaKind)
 	r.Set("media_file", it.MediaFile)
 	r.Set("media_url", it.MediaURL)

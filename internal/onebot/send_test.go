@@ -56,7 +56,7 @@ func TestBuildOutbounds(t *testing.T) {
 		}
 	})
 
-	t.Run("文本加一张图", func(t *testing.T) {
+	t.Run("文本加一张图转 markdown", func(t *testing.T) {
 		out, _ := c.buildOutbounds([]Segment{
 			textSegment("看图"),
 			{Type: "image", Data: map[string]string{"file": "u"}},
@@ -64,30 +64,38 @@ func TestBuildOutbounds(t *testing.T) {
 		if len(out) != 1 {
 			t.Fatalf("应合并成 1 条, 实际 %d", len(out))
 		}
-		if out[0].content != "看图" || out[0].media == nil || out[0].media.kind != "image" {
-			t.Fatalf("解析错误: %+v", out[0])
+		// 文本 + 图片走 markdown, 才能控制图片在文字之后
+		if len(out[0].segments) != 2 || out[0].segments[0].Type != "text" {
+			t.Fatalf("应转成 markdown 段: %+v", out[0])
 		}
 	})
 
-	t.Run("两张图拆两条", func(t *testing.T) {
+	t.Run("文本加两张图合成一条 markdown", func(t *testing.T) {
 		out, _ := c.buildOutbounds([]Segment{
 			textSegment("t"),
+			{Type: "image", Data: map[string]string{"file": "a"}},
+			{Type: "image", Data: map[string]string{"file": "b"}},
+		}, "group")
+		if len(out) != 1 || len(out[0].segments) != 3 {
+			t.Fatalf("应合成 1 条 3 段 markdown, 实际 %+v", out)
+		}
+	})
+
+	t.Run("纯图片多张拆多条", func(t *testing.T) {
+		out, _ := c.buildOutbounds([]Segment{
 			{Type: "image", Data: map[string]string{"file": "a"}},
 			{Type: "image", Data: map[string]string{"file": "b"}},
 		}, "group")
 		if len(out) != 2 {
 			t.Fatalf("应拆成 2 条, 实际 %d", len(out))
 		}
-		if out[0].content != "t" || out[0].media.file != "a" {
-			t.Fatalf("第一条错误: %+v", out[0])
-		}
-		if out[1].content != "" || out[1].media.file != "b" {
-			t.Fatalf("第二条错误: %+v", out[1])
+		if out[0].media.file != "a" || out[1].media.file != "b" {
+			t.Fatalf("顺序错误: %+v", out)
 		}
 	})
 
-	t.Run("超出被动回复上限截断", func(t *testing.T) {
-		segs := []Segment{textSegment("t")}
+	t.Run("纯图片超出被动回复上限截断", func(t *testing.T) {
+		segs := []Segment{}
 		for i := 0; i < 7; i++ {
 			segs = append(segs, Segment{Type: "image", Data: map[string]string{"file": "u"}})
 		}
@@ -97,6 +105,19 @@ func TestBuildOutbounds(t *testing.T) {
 		}
 		if len(skipped) == 0 {
 			t.Fatal("应记录被截断的段")
+		}
+	})
+
+	t.Run("混合非图片媒体不转 markdown", func(t *testing.T) {
+		out, _ := c.buildOutbounds([]Segment{
+			textSegment("t"),
+			{Type: "video", Data: map[string]string{"file": "v"}},
+		}, "group")
+		if len(out) != 1 || out[0].media == nil {
+			t.Fatalf("含视频应走富媒体: %+v", out)
+		}
+		if len(out[0].segments) != 0 {
+			t.Fatal("不应转成 markdown")
 		}
 	})
 
