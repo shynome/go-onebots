@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.5] - 2026-11-14
+
+### 修复
+
+- markdown 消息不再丢失 `@全体`：`markdownTextSegments` 保留 `at` 段，
+  `markdownFromSegments` 将其渲染为 `<qqbot-at-everyone />`
+  - 之前「文本 + 图片 + @全体」走 markdown 分支时，`at` 段被过滤，
+    消息发出去群里没有 @ 到任何人
+
 ## [0.3.4] - 2026-11-14
 
 ### 修复
