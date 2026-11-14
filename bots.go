@@ -12,11 +12,6 @@ func initBots(app core.App, mgr *onebot.Manager) {
 		e.Router.GET("/onebot/v11/{botId}/ws", mgr.ServeWS)
 		e.Router.GET("/onebot/v11/{botId}/{action}", mgr.ServeHTTP)
 		e.Router.POST("/onebot/v11/{botId}/{action}", mgr.ServeHTTP)
-		// OneBot v11 标准 HTTP 接口: /:action, 支持 GET 与 POST
-		e.Router.GET("/{action}", mgr.ServeStdAction)
-		e.Router.POST("/{action}", mgr.ServeStdAction)
-		e.Router.GET("/{action}/", mgr.ServeStdAction)
-		e.Router.POST("/{action}/", mgr.ServeStdAction)
 
 		records, err := e.App.FindRecordsByFilter(db.TableQQBots, "enabled = true", "", 0, 0)
 		if err != nil {

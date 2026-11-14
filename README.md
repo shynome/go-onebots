@@ -85,41 +85,37 @@ ws://<host>:8090/onebot/v11/<botId>/ws
 
 ### HTTP API
 
-除正向 WebSocket 外，也实现 OneBot v11 标准的 HTTP 接口（[规范](https://github.com/botuniverse/onebot-11/blob/master/communication/http.md)）：
+除正向 WebSocket 外，也提供 HTTP action 接口，与 WS 共用同一套实现：
 
 ```
-GET  http://<host>:8090/<action>?key=value
-POST http://<host>:8090/<action>          # JSON / urlencoded / query 均可
+GET  http://<host>:8090/onebot/v11/<botId>/<action>?key=value
+POST http://<host>:8090/onebot/v11/<botId>/<action>     # JSON / urlencoded / query 均可
 ```
 
-机器人按 `access_token` 反查，所以标准接口**必须提供 token**（在 `qq_bots` 的
-`onebot_token` 里配置）。多机器人场景可以用显式路径指定，无需 token 反查：
-
-```
-POST http://<host>:8090/onebot/v11/<botId>/<action>
-```
-
-状态码遵循规范：
+机器人由 URL 里的 `botId` 指定；`qq_bots.onebot_token` 非空时才校验 token，
+留空则免校验。状态码：
 
 | 状态码 | 含义 |
 | --- | --- |
 | 200 | 请求已处理，成功与否看响应体 `retcode` |
-| 401 | 未提供 `access_token`（或指定路径下机器人配了 token 但请求未带） |
-| 403 | 提供了 token 但不匹配 |
 | 404 | action 不存在 |
+| 401 / 403 | 机器人配了 token 但未提供 / 不匹配 |
 
 ```bash
-curl 'http://127.0.0.1:8090/get_status'
+curl 'http://127.0.0.1:8090/onebot/v11/<botId>/get_status'
 # {"status":"ok","retcode":0,"data":{"good":true,"online":true}}
 
-curl -H 'Authorization: Bearer <onebot_token>' -X POST \
-  http://127.0.0.1:8090/send_group_msg \
+curl -X POST http://127.0.0.1:8090/onebot/v11/<botId>/send_group_msg \
   -d '{"group_id":10000000005,"message":[{"type":"text","data":{"text":"hi"}}]}'
 
 # query / urlencoded 传参会被自动做类型还原（字符串 "10000000005" -> 数字）
-curl -X POST http://127.0.0.1:8090/send_group_msg \
+curl -X POST http://127.0.0.1:8090/onebot/v11/<botId>/send_group_msg \
   --data-urlencode "group_id=10000000005" --data-urlencode "message=hi"
 ```
+
+> 没有实现 OneBot 11 规范里的根路径形式 `POST /{action}`。PocketBase 的根路由会把任意
+> 深度路径的首段当成路径参数，挂上 `/{action}` 会吞掉所有未匹配请求、把正常的 404 变成
+> 401/1404，代价大于收益。客户端把 base URL 配到 `.../onebot/v11/<botId>` 即可。
 
 注意 ZeroBot 的 HTTP driver 是**纯 HTTP 模式**：`NewHTTPClient(url, token, callerURL, callerToken)`
 中 `callerURL` 是 action 请求地址（即上面的接口），`url` 是 ZeroBot 自己监听的地址，
