@@ -1,12 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-14
 
 ### 新增
 
 - OneBot v11 HTTP API：`POST /onebot/v11/{botId}/{action}`，与 WebSocket 共用同一套 action 实现
 - 认证支持 `Authorization: Bearer` 与 `?access_token=` 两种写法，WS 与 HTTP 统一校验
-- `examples/zerobot` 支持 `ONEBOT_MODE=http` 切换到 HTTP driver（仅 action，事件上报暂未实现）
+- `examples/zerobot` 支持 `ONEBOT_MODE=http` 切换到 HTTP driver
+
+### 说明
+
+- HTTP 通道只提供 action 接口，事件推送仍走 WebSocket。ZeroBot 的 HTTP driver 需要服务端
+  主动 POST 事件到其监听地址，本项目暂未实现该上报，故 HTTP driver 只能握手与发消息
 
 ## [0.1.0] - 2026-11-14
 
