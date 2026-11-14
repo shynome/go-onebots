@@ -147,13 +147,48 @@ func (c *BotContext) resolveImageForMarkdown(ctx context.Context, file string) (
 	}
 }
 
+// markdownEscaper 转义 markdown 特殊字符
+// 普通文本里的 * _ # 等不应被当成格式, 否则插件发的内容会变形
+var markdownEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	"`", "\\`",
+	"*", `\*`,
+	"_", `\_`,
+	"[", `\[`,
+	"]", `\]`,
+	"#", `\#`,
+	"~", `\~`,
+	"|", `\|`,
+	">", `\>`,
+)
+
+// escapeMarkdown 转义普通文本, 保留换行
+func escapeMarkdown(s string) string {
+	// 按行处理: 行首的列表/标题符号也一并转义
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		indent := line[:len(line)-len(trimmed)]
+		trimmed = markdownEscaper.Replace(trimmed)
+		// 行首 - + 数字编号会被识别成列表
+		if strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "+") {
+			trimmed = `\` + trimmed
+		}
+		lines[i] = indent + trimmed
+	}
+	return strings.Join(lines, "\n")
+}
+
 // markdownFromSegments 把文本与图片按原顺序拼成 markdown
 func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (string, error) {
 	var sb strings.Builder
 	for _, s := range segs {
 		switch s.Type {
 		case "text":
-			sb.WriteString(s.Data["text"])
+			sb.WriteString(escapeMarkdown(s.Data["text"]))
 		case "image":
 			file := s.Data["file"]
 			if file == "" {
