@@ -327,6 +327,39 @@ func (m *Map) NumExtra(kind Kind, num int64) (string, map[string]any, error) {
 	return openid, extra, nil
 }
 
+// GroupNumbers 返回 openid -> 管理员填写的真实群号
+// QQ 官方只给 group_openid, 不提供群号, 所以群号只能人工填写在群记录上
+func (m *Map) GroupNumbers() (map[string]int64, error) {
+	recs, err := m.app.FindRecordsByFilter(db.TableIDMap,
+		"bot = {:bot} && kind = 'group' && qq_number > 0", "", 0, 0,
+		dbx.Params{"bot": m.botID},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	numbers := make(map[string]int64, len(recs))
+	for _, rec := range recs {
+		numbers[rec.GetString("openid")] = int64(rec.GetFloat("qq_number"))
+	}
+	return numbers, nil
+}
+
+// GroupOpenIDByQqNumber 按真实群号反查 openid
+func (m *Map) GroupOpenIDByQqNumber(qqNumber int64) (string, error) {
+	recs, err := m.app.FindRecordsByFilter(db.TableIDMap,
+		"bot = {:bot} && kind = 'group' && qq_number = {:num}", "", 1, 0,
+		dbx.Params{"bot": m.botID, "num": qqNumber},
+	)
+	if err != nil {
+		return "", err
+	}
+	if len(recs) == 0 {
+		return "", errors.New("未找到该群号")
+	}
+	return recs[0].GetString("openid"), nil
+}
+
 // ListNums 列出某类型的全部 num(用于 get_group_list)
 func (m *Map) ListNums(kind Kind) ([]int64, error) {
 	recs, err := m.app.FindRecordsByFilter(

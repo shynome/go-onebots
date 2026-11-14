@@ -169,16 +169,15 @@ docker run -d --name onebots \
 
 ## 使用真实群号
 
-QQ 官方 API 只有 `group_openid`，不提供真实群号，所以需要手工绑定一次：
+QQ 官方 API 只有 `group_openid`，不提供真实群号，所以需要手工填一次：
 
-1. 让机器人先在该群收到一条消息，后台 `onebot_id_map` 里会出现一条 `kind=group` 的记录，
-   复制它的 `openid`
-2. 在 `onebot_group_bind` 里新增：`bot` + `qq_number`（真实群号）+ `group_openid`
+1. 让机器人先在该群收到一条消息，后台 `onebot_id_map` 里会出现一条 `kind=group` 的记录
+2. 直接在这条记录的 `qq_number` 字段填上真实群号并保存
 3. 之后**收发统一用真实群号**：
    - `send_group_msg` 的 `group_id` 传真实群号
    - 事件里的 `group_id`、`get_group_list` / `get_group_info` 返回的也是真实群号
 
-未绑定时一切照旧（发送用映射 id，事件里是映射 id）。绑定后映射 id 仍然可以作为
+未填写时一切照旧（发送用映射 id，事件里是映射 id）。填写后映射 id 仍然可以作为
 `send_group_msg` 的参数使用，便于平滑过渡。
 
 > 历史事件里的 `group_id` 不会回溯修改，仍为绑定前的映射 id。

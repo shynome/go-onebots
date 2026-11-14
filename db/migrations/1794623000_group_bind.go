@@ -16,7 +16,7 @@ func init() {
 
 		bots := try.To1(app.FindCollectionByNameOrId(db.TableQQBots))
 
-		bind := core.NewBaseCollection(db.TableGroupBind, ID(db.TableGroupBind))
+		bind := core.NewBaseCollection("onebot_group_bind", ID("onebot_group_bind"))
 		bind.Fields.Add(
 			&core.RelationField{
 				Name: "bot", Id: ID("bot"), System: true,

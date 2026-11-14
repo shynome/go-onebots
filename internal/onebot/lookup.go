@@ -6,41 +6,30 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/pocketbase/dbx"
-	"github.com/shynome/go-onebots/db"
 	"github.com/shynome/go-onebots/internal/bot"
 	"github.com/shynome/go-onebots/internal/eventlog"
 	"github.com/shynome/go-onebots/internal/idmap"
 )
 
 // groupBinds 返回 openid -> 真实群号 的绑定关系
+// 群号直接保存在 onebot_id_map 的群记录上
 func (c *BotContext) groupBinds() map[string]int64 {
-	recs, err := c.mgr.app.FindRecordsByFilter(db.TableGroupBind,
-		"bot = {:bot}", "", 0, 0, dbx.Params{"bot": c.botID})
+	m, err := c.ids.GroupNumbers()
 	if err != nil {
 		return nil
-	}
-	m := make(map[string]int64, len(recs))
-	for _, rec := range recs {
-		m[rec.GetString("group_openid")] = int64(rec.GetFloat("qq_number"))
 	}
 	return m
 }
 
 // groupOpenIDByNumber 用真实群号查 group_openid
-// QQ 官方 API 只给 openid 不提供群号, 只能靠管理员在 onebot_group_bind 里手工绑定
+// QQ 官方 API 只给 openid 不提供群号, 只能靠管理员在 onebot_id_map 里给群记录填 qq_number
 func (c *BotContext) groupOpenIDByNumber(qqNumber int64) (string, error) {
-	recs, err := c.mgr.app.FindRecordsByFilter(db.TableGroupBind,
-		"bot = {:bot} && qq_number = {:num}", "", 1, 0,
-		dbx.Params{"bot": c.botID, "num": qqNumber})
+	openid, err := c.ids.GroupOpenIDByQqNumber(qqNumber)
 	if err != nil {
-		return "", err
-	}
-	if len(recs) == 0 {
 		return "", errors.New("未知的 group_id: " + itoa(qqNumber) +
-			", 既不是已有的映射 id, 也没有在 onebot_group_bind 里绑定该群号")
+			", 既不是已有的映射 id, 也没有在 onebot_id_map 里给该群记录填 qq_number")
 	}
-	return recs[0].GetString("group_openid"), nil
+	return openid, nil
 }
 
 type lookupParams struct {
