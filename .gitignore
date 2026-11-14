@@ -7,3 +7,4 @@ go-onebots
 .env.*
 !.env.example
 __debug_bin*
+examples/zerobot/zerobot-demo
