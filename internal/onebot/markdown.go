@@ -26,12 +26,13 @@ import (
 // markdownTimeout markdown 图片解析(下载/转存)超时
 const markdownTimeout = 3 * time.Minute
 
-// markdownTextSegments 挑出 markdown 能表达的段(文本与图片)
+// markdownTextSegments 挑出 markdown 能表达的段(文本、图片与 at)
+// QQ 文档: 群聊的 @全部成员 支持 markdown 消息
 func markdownTextSegments(segs []Segment) []Segment {
 	out := make([]Segment, 0, len(segs))
 	for _, s := range segs {
 		switch s.Type {
-		case "text", "image":
+		case "text", "image", "at":
 			out = append(out, s)
 		}
 	}
@@ -201,7 +202,7 @@ type resolvedImage struct {
 	w, h int
 }
 
-// markdownFromSegments 把文本与图片按原顺序拼成 markdown
+// markdownFromSegments 把文本、图片与 at 按原顺序拼成 markdown
 // 同一条消息里重复的图片链接只会解析/下载一次
 func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (string, error) {
 	cache := make(map[string]resolvedImage, len(segs))
@@ -228,6 +229,11 @@ func (c *BotContext) markdownFromSegments(ctx context.Context, segs []Segment) (
 				cache[file] = img
 			}
 			sb.WriteString(markdownImage(img.w, img.h, img.url))
+		case "at":
+			// 群聊的 @全部成员 支持 markdown 消息; 单人 @ 暂不支持
+			if s.Data["qq"] == "all" {
+				sb.WriteString("<qqbot-at-everyone />")
+			}
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil

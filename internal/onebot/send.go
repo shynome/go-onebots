@@ -130,7 +130,7 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 			case scene != "group":
 				skipped = append(skipped, "at(私聊)")
 			case qq == "all":
-				// QQ 官方用这个标记 @全体, 需机器人为群管理员且同群每天一次
+				// @全体 文本消息与 markdown 都支持, 这里写给纯文本路径
 				sb.WriteString("<qqbot-at-everyone />")
 			default:
 				// 单人的 @ 标记格式未找到官方说明, 先跳过
