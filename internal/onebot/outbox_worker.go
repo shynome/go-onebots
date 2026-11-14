@@ -68,8 +68,8 @@ func (m *Manager) retryOutboxOne(store *outbox.Store, rec *core.Record) {
 	c := m.Get(botID)
 	res, err := c.deliver(context.Background(), b, rec)
 	if err != nil {
-		m.app.Logger().Warn("补发出站消息失败", "bot", botID, "record", rec.Id, "error", err)
+		m.app.Logger().Warn("补发出站消息失败", "bot", botID, "outbox", rec.Id, "error", err)
 		return
 	}
-	m.app.Logger().Info("已补发积压的出站消息", "bot", botID, "record", rec.Id, "message_id", res.ID)
+	m.app.Logger().Info("已补发积压的出站消息", "bot", botID, "outbox", rec.Id, "message_id", res.ID)
 }

@@ -262,7 +262,7 @@ func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) 
 		res, err := c.deliverOnce(ctx, b, rec)
 		if err == nil {
 			if serr := c.outbox.MarkSent(rec, res.ID); serr != nil {
-				c.logger.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", serr)
+				c.logger.Warn("更新发送状态失败", "bot", c.botID, "outbox", rec.Id, "error", serr)
 			}
 			c.recordSent(rec, res.ID)
 			return res, nil
@@ -271,7 +271,7 @@ func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) 
 
 		if !retryable(err) || attempt >= maxSendRetry {
 			if ferr := c.outbox.MarkFailed(rec, err.Error()); ferr != nil {
-				c.logger.Warn("更新发送状态失败", "bot", c.botID, "record", rec.Id, "error", ferr)
+				c.logger.Warn("更新发送状态失败", "bot", c.botID, "outbox", rec.Id, "error", ferr)
 			}
 			return last, err
 		}
@@ -279,7 +279,7 @@ func (c *BotContext) deliver(ctx context.Context, b *bot.Bot, rec *core.Record) 
 		delay := retryBackoff(attempt)
 		c.logger.Warn("发送失败, 准备重试", "bot", c.botID, "attempt", attempt+1, "delay", delay, "error", err)
 		if rerr := c.outbox.RetryLater(rec, time.Now().Add(delay), err.Error()); rerr != nil {
-			c.logger.Warn("更新重试时间失败", "bot", c.botID, "record", rec.Id, "error", rerr)
+			c.logger.Warn("更新重试时间失败", "bot", c.botID, "outbox", rec.Id, "error", rerr)
 		}
 
 		select {
@@ -328,7 +328,7 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 		}
 		if m.url == "" {
 			if serr := c.outbox.SetMediaURL(rec, fileURL); serr != nil {
-				c.logger.Debug("缓存媒体 URL 失败", "bot", c.botID, "record", rec.Id, "error", serr)
+				c.logger.Debug("缓存媒体 URL 失败", "bot", c.botID, "outbox", rec.Id, "error", serr)
 			}
 		}
 		up, err := c.uploadMediaToQQ(ctx, b, scene, openid, qqbot.UploadRequest{
@@ -345,7 +345,7 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 	msgID, seq := c.reply.Next(scene, openid)
 	if msgID == "" {
 		c.logger.Warn("被动回复窗口已过期, 尝试发送主动消息",
-			"bot", c.botID, "scene", scene, "target", openid)
+			"bot", c.botID, "outbox", rec.Id, "scene", scene, "target", openid)
 	}
 	req.MsgID = msgID
 	req.MsgSeq = seq
