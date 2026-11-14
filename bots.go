@@ -10,6 +10,7 @@ import (
 func initBots(app core.App, mgr *onebot.Manager) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/onebot/v11/{botId}/ws", mgr.ServeWS)
+		e.Router.POST("/onebot/v11/{botId}/{action}", mgr.ServeHTTP)
 
 		records, err := e.App.FindRecordsByFilter(db.TableQQBots, "enabled = true", "", 0, 0)
 		if err != nil {

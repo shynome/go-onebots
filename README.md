@@ -77,6 +77,28 @@ ws://<host>:8090/onebot/v11/<botId>/ws
 
 `botId` 是 `qq_bots` 记录 id（后台列表里可以看到）。
 
+### HTTP API
+
+除正向 WebSocket 外，也提供 OneBot v11 的 HTTP action 接口，与 WS 共用同一套实现：
+
+```
+POST http://<host>:8090/onebot/v11/<botId>/<action>
+```
+
+请求体就是 params，响应为标准的 `{status, retcode, data}`，HTTP 状态码统一 200（由 `retcode` 区分结果）。
+认证支持两种写法，与 WS 一致：
+
+```bash
+curl -H 'Authorization: Bearer <onebot_token>' \
+  -X POST http://127.0.0.1:8090/onebot/v11/<botId>/send_group_msg \
+  -d '{"group_id":10000000005,"message":[{"type":"text","data":{"text":"hi"}}]}'
+
+curl -X POST 'http://127.0.0.1:8090/onebot/v11/<botId>/get_login_info?access_token=<onebot_token>' -d '{}'
+```
+
+注意 ZeroBot 的 HTTP driver 是混合模式：`NewHTTPClient(httpURL, token, wsURL)` 只把 **action**
+走 HTTP，**事件仍然走 WebSocket**，所以 WS 同时保留。纯 HTTP（webhook 上报）需要自己实现上报端。
+
 ### ZeroBot 接入
 
 ```go

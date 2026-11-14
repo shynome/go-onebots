@@ -362,26 +362,8 @@ func (c *BotContext) restore() {
 // ServeWS OneBot v11 正向 WebSocket 入口
 func (m *Manager) ServeWS(e *core.RequestEvent) error {
 	botID := e.Request.PathValue("botId")
-	if botID == "" {
-		writeJSONError(e, http.StatusBadRequest, "缺少机器人 id")
+	if _, ok := m.checkAuth(e, botID); !ok {
 		return nil
-	}
-
-	rec, err := m.app.FindRecordById(db.TableQQBots, botID)
-	if err != nil {
-		slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "机器人不存在", "remote", e.Request.RemoteAddr)
-		writeJSONError(e, http.StatusNotFound, "机器人不存在")
-		return nil
-	}
-
-	if token := rec.GetString("onebot_token"); token != "" {
-		auth := strings.TrimPrefix(e.Request.Header.Get("Authorization"), "Bearer ")
-		if auth != token {
-			slog.Warn("onebot 连接被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
-			e.Response.Header().Set("WWW-Authenticate", `Bearer realm="onebot"`)
-			writeJSONError(e, http.StatusUnauthorized, "token 无效")
-			return nil
-		}
 	}
 
 	c := m.Get(botID)
@@ -475,6 +457,40 @@ type actionRequest struct {
 	Action string          `json:"action"`
 	Params json.RawMessage `json:"params"`
 	Echo   json.RawMessage `json:"echo"`
+}
+
+// checkAuth 校验机器人存在且 token 匹配
+// token 可放 Authorization: Bearer 或 access_token 查询参数
+// 返回 false 表示已写好错误响应, 调用方直接返回
+func (m *Manager) checkAuth(e *core.RequestEvent, botID string) (*core.Record, bool) {
+	if botID == "" {
+		writeJSONError(e, http.StatusBadRequest, "缺少机器人 id")
+		return nil, false
+	}
+
+	rec, err := m.app.FindRecordById(db.TableQQBots, botID)
+	if err != nil {
+		slog.Warn("onebot 请求被拒绝", "bot", botID, "reason", "机器人不存在", "remote", e.Request.RemoteAddr)
+		writeJSONError(e, http.StatusNotFound, "机器人不存在")
+		return nil, false
+	}
+
+	token := rec.GetString("onebot_token")
+	if token == "" {
+		return rec, true
+	}
+
+	auth := strings.TrimPrefix(e.Request.Header.Get("Authorization"), "Bearer ")
+	if auth == "" {
+		auth = e.Request.URL.Query().Get("access_token")
+	}
+	if auth != token {
+		slog.Warn("onebot 请求被拒绝", "bot", botID, "reason", "token 无效", "remote", e.Request.RemoteAddr)
+		e.Response.Header().Set("WWW-Authenticate", `Bearer realm="onebot"`)
+		writeJSONError(e, http.StatusUnauthorized, "token 无效")
+		return nil, false
+	}
+	return rec, true
 }
 
 type actionResponse struct {

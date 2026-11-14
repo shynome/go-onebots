@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### 新增
+
+- OneBot v11 HTTP API：`POST /onebot/v11/{botId}/{action}`，与 WebSocket 共用同一套 action 实现
+- 认证支持 `Authorization: Bearer` 与 `?access_token=` 两种写法，WS 与 HTTP 统一校验
+
 ## [0.1.0] - 2026-11-14
 
 首个可用版本：把 QQ 官方机器人包装成 OneBot v11 WebSocket 服务端，可直接接入 ZeroBot。
