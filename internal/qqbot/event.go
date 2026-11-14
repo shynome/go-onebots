@@ -34,6 +34,8 @@ const (
 	EventResumed              Event = "RESUMED"
 	EventC2CMessageCreate     Event = "C2C_MESSAGE_CREATE"
 	EventGroupATMessageCreate Event = "GROUP_AT_MESSAGE_CREATE"
+	// EventGroupMessageCreate 群内全量消息, 需在开放平台开启 "接收所有消息"
+	EventGroupMessageCreate Event = "GROUP_MESSAGE_CREATE"
 )
 
 // Payload 网关下行消息
@@ -53,9 +55,11 @@ type ReadyData struct {
 }
 
 type User struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Bot      bool   `json:"bot"`
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	Bot          bool   `json:"bot"`
+	MemberOpenID string `json:"member_openid"`
+	UserOpenID   string `json:"user_openid"`
 }
 
 // Author 消息发送者, 群聊与单聊字段名不同
@@ -111,4 +115,5 @@ type GroupATMessage struct {
 	GroupOpenID string              `json:"group_openid"`
 	Author      Author              `json:"author"`
 	Attachments []MessageAttachment `json:"attachments"`
+	Mentions    []User              `json:"mentions"`
 }

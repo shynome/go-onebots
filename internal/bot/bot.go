@@ -161,7 +161,7 @@ func (b *Bot) handle(p qqbot.Payload) {
 			b.ready = true
 			b.selfMu.Unlock()
 		}
-	case qqbot.EventC2CMessageCreate, qqbot.EventGroupATMessageCreate:
+	case qqbot.EventC2CMessageCreate, qqbot.EventGroupATMessageCreate, qqbot.EventGroupMessageCreate:
 		slog.Info("收到 QQ 消息", "bot", b.Record.Id, "event", p.Event, "data", string(p.Data))
 	default:
 		slog.Debug("忽略 QQ 事件", "bot", b.Record.Id, "event", p.Event)

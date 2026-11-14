@@ -18,7 +18,8 @@
 | `send_private_msg` / `send_group_msg` / `send_msg` | 纯文本，自动作为被动回复发送 |
 | `get_status` / `get_version_info` | 本地返回 |
 
-**事件**：`C2C_MESSAGE_CREATE` → 私聊消息；`GROUP_AT_MESSAGE_CREATE` → 群消息。
+**事件**：`C2C_MESSAGE_CREATE` → 私聊消息；`GROUP_AT_MESSAGE_CREATE` → 群 @ 消息；
+`GROUP_MESSAGE_CREATE` → 群内全量消息（需在开放平台开启「接收所有消息」，不 @ 机器人时不触发命令）。
 入站附件（图片 / 语音 / 视频 / 文件）会转成对应的 OneBot 消息段，`sender` 带真实昵称、群名片与群角色。
 
 **消息缓存**：所有入站事件都会写进 `onebot_events`。客户端掉线期间到达的消息会在

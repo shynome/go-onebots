@@ -33,6 +33,26 @@ func TestAttachmentSegment(t *testing.T) {
 	}
 }
 
+func TestMentionsSelf(t *testing.T) {
+	self := "SELF_OPENID"
+
+	if !mentionsSelf([]qqbot.User{{MemberOpenID: self}}, self) {
+		t.Fatal("应识别群成员 openid")
+	}
+	if !mentionsSelf([]qqbot.User{{ID: self}}, self) {
+		t.Fatal("应识别 id")
+	}
+	if mentionsSelf([]qqbot.User{{MemberOpenID: "other"}}, self) {
+		t.Fatal("不应识别其他用户")
+	}
+	if mentionsSelf(nil, self) {
+		t.Fatal("空列表不应命中")
+	}
+	if mentionsSelf([]qqbot.User{{MemberOpenID: self}}, "") {
+		t.Fatal("自身 openid 为空时不应命中")
+	}
+}
+
 func TestBuildMessageSegments(t *testing.T) {
 	segs := buildMessageSegments("hello", []qqbot.MessageAttachment{
 		{ContentType: "file", Filename: "a.jpg", URL: "u"},

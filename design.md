@@ -50,14 +50,30 @@ kind 取值：
 | QQ 官方事件 | OneBot v11 |
 | --- | --- |
 | `C2C_MESSAGE_CREATE` | `post_type=message`，`message_type=private`，`sub_type=friend` |
-| `GROUP_AT_MESSAGE_CREATE` | `post_type=message`，`message_type=group`，`sub_type=normal` |
+| `GROUP_AT_MESSAGE_CREATE` | `post_type=message`，`message_type=group`，`sub_type=normal`，一定带 `at` 机器人段 |
+| `GROUP_MESSAGE_CREATE` | 同上，但只有 `mentions` 里 @ 了机器人才带 `at` 段 |
 | 其它（`FRIEND_ADD` / `GROUP_MSG_RECEIVE` / `GROUP_ADD_ROBOT` …） | MVP 忽略，仅打日志 |
+
+`GROUP_MESSAGE_CREATE` 是「群消息（全量模式）」，与 `GROUP_AT_MESSAGE_CREATE` 共用
+`GROUP_AND_C2C_EVENT (1<<25)`，需要在开放平台开启「接收所有消息」才会下发，
+字段与 `GROUP_AT_MESSAGE_CREATE` 一致，额外带 `mentions`。
 
 ### 3.2 群消息的 @ 处理
 
-QQ 官方群消息 `content` 形如 `<@!BOT_OPENID> 你好`。
-必须把 `<@!...>` 转成 `{"type":"at","data":{"qq":"<self_id 映射值>"}}` 段 + 文本段。
-ZeroBot 靠这个 `at` 段判断 `IsToMe`，否则群里所有命令都不触发。
+QQ 官方群消息 `content` 里 `@某成员` 会写成 `<@member_openid>`，`@全体` 写成 `<@all>`。
+转换时会拆成 `at` 段（映射成 int64，`<@all>` 用 `qq=all`）。
+
+- `GROUP_AT_MESSAGE_CREATE`：一定是 @ 机器人，**保证**首位有 `at` 机器人段
+- `GROUP_MESSAGE_CREATE`（全量）：只有 `mentions` 包含机器人才补 `at` 段，否则 `IsToMe=false`
+
+ZeroBot 靠 `at` 段判断 `IsToMe`，群里命令才会触发；全量消息不 @ 机器人时不会误触发命令。
+
+### 3.2.1 消息去重
+
+按消息 id 在内存中保留 10 分钟（最多 2000 条）去重，避免：
+
+- WS `resume` 重放最近 5 条导致重复处理
+- 开启全量模式后 `GROUP_AT_MESSAGE_CREATE` 与 `GROUP_MESSAGE_CREATE` 同时到达
 
 ### 3.3 sender 字段
 

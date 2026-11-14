@@ -31,6 +31,10 @@ const (
 	pendingRetention = 30 * time.Minute
 	// maxPending 离线队列上限, 超出丢弃最旧的
 	maxPending = 2000
+	// dedupWindow 消息去重窗口, 覆盖 resume 重放与群 @/全量事件重叠
+	dedupWindow = 10 * time.Minute
+	// dedupMax 去重表最多保存的消息数
+	dedupMax = 2000
 )
 
 type Manager struct {
@@ -81,9 +85,13 @@ type BotContext struct {
 
 	seq int64 // 事件序号, 原子递增
 
-	selfMu   sync.RWMutex
-	selfNum  int64
-	selfName string
+	selfMu     sync.RWMutex
+	selfNum    int64
+	selfName   string
+	selfOpenID string
+
+	seenMu sync.Mutex
+	seen   map[string]time.Time
 
 	clientsMu sync.Mutex
 	clients   map[*wsClient]struct{}
@@ -113,11 +121,46 @@ func (c *wsClient) writeRaw(ctx context.Context, data []byte) error {
 	return c.conn.Write(wctx, websocket.MessageText, data)
 }
 
-func (c *BotContext) setSelf(num int64, name string) {
+func (c *BotContext) setSelf(num int64, name, openid string) {
 	c.selfMu.Lock()
 	defer c.selfMu.Unlock()
 	c.selfNum = num
 	c.selfName = name
+	c.selfOpenID = openid
+}
+
+// selfOpenIDStr 返回机器人自身的 openid, 用于判断 mentions 里是否 @ 了机器人
+func (c *BotContext) selfOpenIDStr() string {
+	c.selfMu.RLock()
+	id := c.selfOpenID
+	c.selfMu.RUnlock()
+	return id
+}
+
+// firstSeen 按消息 id 去重: resume 重放、@ 事件与全量事件并存时避免重复处理
+func (c *BotContext) firstSeen(id string) bool {
+	if id == "" {
+		return true
+	}
+	now := time.Now()
+	c.seenMu.Lock()
+	defer c.seenMu.Unlock()
+
+	if c.seen == nil {
+		c.seen = map[string]time.Time{}
+	}
+	if t, ok := c.seen[id]; ok && now.Sub(t) < dedupWindow {
+		return false
+	}
+	if len(c.seen) >= dedupMax {
+		for k, t := range c.seen {
+			if now.Sub(t) >= dedupWindow {
+				delete(c.seen, k)
+			}
+		}
+	}
+	c.seen[id] = now
+	return true
 }
 
 // self 返回机器人自身的 OneBot id 与昵称, 优先用 READY 缓存
@@ -142,7 +185,7 @@ func (c *BotContext) self() (int64, string) {
 		slog.Warn("分配机器人自身 id 失败", "bot", c.botID, "error", err)
 		return 0, ""
 	}
-	c.setSelf(n, u.Username)
+	c.setSelf(n, u.Username, u.ID)
 	return n, u.Username
 }
 

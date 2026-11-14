@@ -15,8 +15,8 @@ import (
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
-// mentionRe 匹配 content 里的 @ 提及标记
-var mentionRe = regexp.MustCompile(`<@!?[^>]+>`)
+// mentionRe 匹配 content 里的 @ 提及标记, 捕获组为被 @ 的 openid
+var mentionRe = regexp.MustCompile(`<@!?([^>]+)>`)
 
 // StripMention 去掉 content 里的 @ 标记
 func StripMention(content string) string {
@@ -153,11 +153,15 @@ func (c *BotContext) onPayload(p qqbot.Payload) {
 			slog.Warn("记录机器人自身 id 失败", "bot", c.botID, "error", err)
 			return
 		}
-		c.setSelf(num, ready.User.Username)
+		c.setSelf(num, ready.User.Username, ready.User.ID)
 	case qqbot.EventC2CMessageCreate:
 		c.handleC2C(p.Data)
 	case qqbot.EventGroupATMessageCreate:
-		c.handleGroup(p.Data)
+		// 群 @ 机器人, 必然发给机器人
+		c.handleGroup(p.Data, true)
+	case qqbot.EventGroupMessageCreate:
+		// 群内全量消息, 是否 @ 机器人由 mentions 决定
+		c.handleGroup(p.Data, false)
 	}
 }
 
@@ -165,6 +169,10 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 	var msg qqbot.C2CMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		slog.Warn("解析单聊消息失败", "bot", c.botID, "error", err)
+		return
+	}
+	if !c.firstSeen(msg.ID) {
+		slog.Debug("跳过重复单聊消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 
@@ -214,10 +222,14 @@ func (c *BotContext) handleC2C(data json.RawMessage) {
 	})
 }
 
-func (c *BotContext) handleGroup(data json.RawMessage) {
+func (c *BotContext) handleGroup(data json.RawMessage, atEvent bool) {
 	var msg qqbot.GroupATMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		slog.Warn("解析群消息失败", "bot", c.botID, "error", err)
+		return
+	}
+	if !c.firstSeen(msg.ID) {
+		slog.Debug("跳过重复群消息", "bot", c.botID, "message_id", msg.ID)
 		return
 	}
 
@@ -259,7 +271,7 @@ func (c *BotContext) handleGroup(data json.RawMessage) {
 	})
 
 	c.reply.Set("group", msg.GroupOpenID, msg.ID)
-	text := StripMention(msg.Content)
+	segments := c.buildGroupSegments(msg, selfNum, atEvent)
 
 	c.broadcast(wsEvent{
 		Time:        eventTime(msg.Timestamp),
@@ -270,7 +282,7 @@ func (c *BotContext) handleGroup(data json.RawMessage) {
 		MessageID:   msgNum,
 		UserID:      userNum,
 		GroupID:     groupNum,
-		RawMessage:  buildRawMessage(text, msg.Attachments, selfNum),
+		RawMessage:  rawFromSegments(segments),
 		Font:        0,
 		Sender: &wsSender{
 			UserID:   userNum,
@@ -279,6 +291,110 @@ func (c *BotContext) handleGroup(data json.RawMessage) {
 			Role:     role,
 			Sex:      "unknown",
 		},
-		Message: buildMessageSegments(text, msg.Attachments, selfNum),
+		Message: segments,
 	})
+}
+
+// buildGroupSegments 把群消息 content 拆成 OneBot 消息段
+// atEvent 为 true(GROUP_AT_MESSAGE_CREATE) 时保证带 at 机器人段;
+// 全量消息(GROUP_MESSAGE_CREATE) 只在 mentions 里 @ 了机器人才带, 否则 IsToMe=false
+func (c *BotContext) buildGroupSegments(msg qqbot.GroupATMessage, selfNum int64, atEvent bool) []Segment {
+	segs := c.splitContent(msg.Content)
+
+	toMe := atEvent || mentionsSelf(msg.Mentions, c.selfOpenIDStr())
+	if toMe {
+		hasAtSelf := false
+		for _, s := range segs {
+			if s.Type == "at" && s.Data["qq"] == itoa(selfNum) {
+				hasAtSelf = true
+				break
+			}
+		}
+		if !hasAtSelf {
+			segs = append([]Segment{atSegment(selfNum)}, segs...)
+		}
+	}
+
+	for _, a := range msg.Attachments {
+		seg, _ := attachmentSegment(a)
+		segs = append(segs, seg)
+	}
+	return segs
+}
+
+// splitContent 把 <@openid> / <@all> 占位符转成 at 段
+func (c *BotContext) splitContent(content string) []Segment {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+
+	matches := mentionRe.FindAllStringSubmatchIndex(content, -1)
+	if len(matches) == 0 {
+		return []Segment{textSegment(content)}
+	}
+
+	segs := make([]Segment, 0, len(matches)*2+1)
+	pushText := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			segs = append(segs, textSegment(s))
+		}
+	}
+
+	last := 0
+	for _, m := range matches {
+		if m[0] > last {
+			pushText(content[last:m[0]])
+		}
+		openid := content[m[2]:m[3]]
+		switch {
+		case openid == "all":
+			segs = append(segs, Segment{Type: "at", Data: map[string]string{"qq": "all"}})
+		default:
+			if num, err := c.ids.Num(idmap.KindUser, openid); err == nil {
+				segs = append(segs, atSegment(num))
+			} else {
+				pushText("<@" + openid + ">")
+			}
+		}
+		last = m[1]
+	}
+	if last < len(content) {
+		pushText(content[last:])
+	}
+	return segs
+}
+
+func mentionsSelf(mentions []qqbot.User, selfOpenID string) bool {
+	if selfOpenID == "" {
+		return false
+	}
+	for _, u := range mentions {
+		if u.MemberOpenID == selfOpenID || u.UserOpenID == selfOpenID || u.ID == selfOpenID {
+			return true
+		}
+	}
+	return false
+}
+
+// rawFromSegments 生成 CQ 码形式的 raw_message, 仅用于日志与兼容
+func rawFromSegments(segs []Segment) string {
+	var sb strings.Builder
+	for _, s := range segs {
+		switch s.Type {
+		case "text":
+			sb.WriteString(s.Data["text"])
+		case "at":
+			sb.WriteString("[CQ:at,qq=" + s.Data["qq"] + "] ")
+		case "image":
+			sb.WriteString("[CQ:image]")
+		case "record":
+			sb.WriteString("[CQ:record]")
+		case "video":
+			sb.WriteString("[CQ:video]")
+		case "file":
+			sb.WriteString("[CQ:file,name=" + s.Data["name"] + "]")
+		}
+	}
+	return sb.String()
 }
