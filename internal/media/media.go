@@ -96,13 +96,17 @@ func (s *Store) recordURL(rec *core.Record) (string, error) {
 		}
 	}
 
-	// 回退: 需要 Application URL 公网可达
+	// 回退: file 字段是 protected 的, PB 文件链接需要附带 token
 	base := strings.TrimSuffix(s.app.Settings().Meta.AppURL, "/")
 	if base == "" {
 		return "", fmt.Errorf("无法生成中转链接: S3 不可用且未设置 Application URL")
 	}
-	return fmt.Sprintf("%s/api/files/%s/%s/%s",
-		base, rec.Collection().Id, rec.Id, url.PathEscape(name)), nil
+	token, err := rec.NewFileToken()
+	if err != nil {
+		return "", fmt.Errorf("生成文件访问 token 失败: %w", err)
+	}
+	return fmt.Sprintf("%s/api/files/%s/%s/%s?token=%s",
+		base, rec.Collection().Id, rec.Id, url.PathEscape(name), url.QueryEscape(token)), nil
 }
 
 // Cleanup 删除 cutoff 前的记录, 关联文件由 PocketBase 自动删除
