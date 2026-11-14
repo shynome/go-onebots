@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.10] - 2026-11-14
+
+### 修复
+
+- 参数兼容 OneBot 规范的宽松数字：`{"group_id": "123456789"}` 这类字符串形式
+  不再报 `cannot unmarshal string into Go struct field ... of type int64`，
+  覆盖 send / lookup / history / delete 的全部数字参数
+
 ## [0.2.9] - 2026-11-14
 
 ### 新增

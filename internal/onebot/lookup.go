@@ -33,9 +33,9 @@ func (c *BotContext) openIDByNumber(kind idmap.Kind, number int64, label string)
 }
 
 type lookupParams struct {
-	UserID    int64 `json:"user_id"`
-	GroupID   int64 `json:"group_id"`
-	MessageID int64 `json:"message_id"`
+	UserID    flexInt `json:"user_id"`
+	GroupID   flexInt `json:"group_id"`
+	MessageID flexInt `json:"message_id"`
 }
 
 // maxHistoryCount get_group_msg_history 单次返回上限
@@ -43,10 +43,10 @@ const maxHistoryCount = 100
 
 // msgParams get_msg / get_group_msg_history 的入参
 type msgParams struct {
-	MessageID  int64 `json:"message_id"`
-	GroupID    int64 `json:"group_id"`
-	MessageSeq int64 `json:"message_seq"`
-	Count      int   `json:"count"`
+	MessageID  flexInt `json:"message_id"`
+	GroupID    flexInt `json:"group_id"`
+	MessageSeq flexInt `json:"message_seq"`
+	Count      flexInt `json:"count"`
 }
 
 func asString(v any) string {
@@ -105,14 +105,15 @@ func decodeMessage(data []byte) (wsEvent, bool) {
 // getMsg 从事件日志里按 message_id 找回原消息
 // 只能查到保留期内的消息, 超过 logs.maxDays 会被清理
 func (c *BotContext) getMsg(p msgParams) actionResponse {
-	if p.MessageID == 0 {
+	messageID := p.MessageID.Int64()
+	if messageID == 0 {
 		return failResponse(1400, "message_id 不能为空")
 	}
-	if _, _, err := c.ids.MessageExtra(p.MessageID); err != nil {
-		return failResponse(1400, "未知的 message_id: "+itoa(p.MessageID))
+	if _, _, err := c.ids.MessageExtra(messageID); err != nil {
+		return failResponse(1400, "未知的 message_id: "+itoa(messageID))
 	}
 
-	data, err := c.log.MessageByID(p.MessageID)
+	data, err := c.log.MessageByID(messageID)
 	if err != nil {
 		if errors.Is(err, eventlog.ErrNotFound) {
 			return failResponse(1400, "未找到该消息, 可能已超过保留期")
@@ -129,11 +130,12 @@ func (c *BotContext) getMsg(p msgParams) actionResponse {
 
 // getGroupMsgHistory 返回群消息历史, 按时间升序
 func (c *BotContext) getGroupMsgHistory(p msgParams) actionResponse {
-	if p.GroupID == 0 {
+	groupID := p.GroupID.Int64()
+	if groupID == 0 {
 		return failResponse(1400, "group_id 不能为空")
 	}
 
-	count := p.Count
+	count := int(p.Count.Int64())
 	if count <= 0 {
 		count = 20
 	}
@@ -141,7 +143,7 @@ func (c *BotContext) getGroupMsgHistory(p msgParams) actionResponse {
 		count = maxHistoryCount
 	}
 
-	data, err := c.log.GroupHistory(p.GroupID, p.MessageSeq, count)
+	data, err := c.log.GroupHistory(groupID, p.MessageSeq.Int64(), count)
 	if err != nil {
 		return failResponse(1200, "查询群历史失败: "+err.Error())
 	}
@@ -156,9 +158,10 @@ func (c *BotContext) getGroupMsgHistory(p msgParams) actionResponse {
 }
 
 func (c *BotContext) getStrangerInfo(p lookupParams) actionResponse {
-	nickname, _, _ := c.userProfile(idmap.KindUser, p.UserID)
+	userID := p.UserID.Int64()
+	nickname, _, _ := c.userProfile(idmap.KindUser, userID)
 	return okResponse(map[string]any{
-		"user_id":  p.UserID,
+		"user_id":  userID,
 		"nickname": nickname,
 		"sex":      "unknown",
 		"age":      0,
@@ -166,10 +169,11 @@ func (c *BotContext) getStrangerInfo(p lookupParams) actionResponse {
 }
 
 func (c *BotContext) getGroupMemberInfo(p lookupParams) actionResponse {
-	nickname, card, role := c.userProfile(idmap.KindUser, p.UserID)
+	userID := p.UserID.Int64()
+	nickname, card, role := c.userProfile(idmap.KindUser, userID)
 	return okResponse(map[string]any{
-		"group_id":       p.GroupID,
-		"user_id":        p.UserID,
+		"group_id":       p.GroupID.Int64(),
+		"user_id":        userID,
 		"nickname":       nickname,
 		"card":           card,
 		"role":           role,
@@ -181,15 +185,16 @@ func (c *BotContext) getGroupMemberInfo(p lookupParams) actionResponse {
 }
 
 func (c *BotContext) getGroupInfo(p lookupParams) actionResponse {
-	if _, _, err := c.ids.NumExtra(idmap.KindGroup, p.GroupID); err != nil {
+	groupID := p.GroupID.Int64()
+	if _, _, err := c.ids.NumExtra(idmap.KindGroup, groupID); err != nil {
 		// 也允许传填写过的真实群号
-		if _, berr := c.openIDByNumber(idmap.KindGroup, p.GroupID, "group_id"); berr != nil {
-			return failResponse(1400, "未知的 group_id: "+itoa(p.GroupID)+", 需要先收到该群的消息")
+		if _, berr := c.openIDByNumber(idmap.KindGroup, groupID, "group_id"); berr != nil {
+			return failResponse(1400, "未知的 group_id: "+itoa(groupID)+", 需要先收到该群的消息")
 		}
 	}
 	// 官方没有群信息接口, 群名无法获取
 	return okResponse(map[string]any{
-		"group_id":         p.GroupID,
+		"group_id":         groupID,
 		"group_name":       "",
 		"member_count":     0,
 		"max_member_count": 0,
@@ -218,9 +223,10 @@ func (c *BotContext) getGroupList() actionResponse {
 }
 
 func (c *BotContext) deleteMsg(ctx context.Context, b *bot.Bot, p lookupParams) actionResponse {
-	messageOpenID, extra, err := c.ids.MessageExtra(p.MessageID)
+	messageID := p.MessageID.Int64()
+	messageOpenID, extra, err := c.ids.MessageExtra(messageID)
 	if err != nil {
-		return failResponse(1400, "未知的 message_id: "+itoa(p.MessageID))
+		return failResponse(1400, "未知的 message_id: "+itoa(messageID))
 	}
 
 	scene := asString(extra["scene"])
@@ -233,11 +239,11 @@ func (c *BotContext) deleteMsg(ctx context.Context, b *bot.Bot, p lookupParams) 
 	case "private":
 		derr = b.Client().DeleteUserMessage(ctx, target, messageOpenID)
 	default:
-		return failResponse(1400, "消息缺少场景信息, 无法撤回: "+itoa(p.MessageID))
+		return failResponse(1400, "消息缺少场景信息, 无法撤回: "+itoa(messageID))
 	}
 
 	if derr != nil {
-		slog.Warn("撤回消息失败", "bot", c.botID, "message_id", p.MessageID, "error", derr)
+		slog.Warn("撤回消息失败", "bot", c.botID, "message_id", messageID, "error", derr)
 		return failResponse(1200, "撤回失败: "+derr.Error())
 	}
 	return okResponse(nil)

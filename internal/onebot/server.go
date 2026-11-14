@@ -522,8 +522,8 @@ func failResponse(retcode int, msg string) actionResponse {
 }
 
 type sendParams struct {
-	UserID      int64           `json:"user_id"`
-	GroupID     int64           `json:"group_id"`
+	UserID      flexInt         `json:"user_id"`
+	GroupID     flexInt         `json:"group_id"`
 	Message     json.RawMessage `json:"message"`
 	MessageType string          `json:"message_type"`
 }
@@ -624,9 +624,9 @@ func (c *BotContext) sendMessage(ctx context.Context, b *bot.Bot, action string,
 	}
 
 	if scene == "group" {
-		return c.sendGroup(ctx, b, p.GroupID, out)
+		return c.sendGroup(ctx, b, p.GroupID.Int64(), out)
 	}
-	return c.sendPrivate(ctx, b, p.UserID, out)
+	return c.sendPrivate(ctx, b, p.UserID.Int64(), out)
 }
 
 func (c *BotContext) sendGroup(ctx context.Context, b *bot.Bot, groupID int64, out []outbound) actionResponse {
