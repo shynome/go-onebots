@@ -235,11 +235,23 @@ func (c *BotContext) sendOutbounds(ctx context.Context, b *bot.Bot, scene, openi
 }
 
 func (c *BotContext) enqueueOutbound(scene, openid string, ob outbound) (*core.Record, error) {
+	content := ob.content
+	if content == "" && len(ob.segments) > 0 {
+		// markdown 模式: 文本部分存进 content, 后台一眼能看到发的是什么
+		var sb strings.Builder
+		for _, s := range ob.segments {
+			if s.Type == "text" {
+				sb.WriteString(s.Data["text"])
+			}
+		}
+		content = strings.TrimSpace(sb.String())
+	}
+
 	it := outbox.Item{
 		BotID:    c.botID,
 		Scene:    scene,
 		Target:   openid,
-		Content:  ob.content,
+		Content:  content,
 		Markdown: ob.markdown,
 	}
 	if len(ob.segments) > 0 {
@@ -395,9 +407,13 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 	}
 
 	segs := make([]Segment, 0, 2)
-	if md := rec.GetString("markdown"); md != "" {
-		segs = append(segs, Segment{Type: "markdown", Data: map[string]string{"content": md}})
-	} else {
+	switch {
+	case rec.GetString("markdown") != "":
+		segs = append(segs, Segment{Type: "markdown", Data: map[string]string{"content": rec.GetString("markdown")}})
+	case len(outboxSegments(rec)) > 0:
+		// 文本+图片的原始段, 事件里保留完整内容
+		segs = append(segs, outboxSegments(rec)...)
+	default:
 		if ob.content != "" {
 			segs = append(segs, textSegment(ob.content))
 		}

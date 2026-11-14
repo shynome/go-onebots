@@ -393,6 +393,9 @@ func rawFromSegments(segs []Segment) string {
 		switch s.Type {
 		case "text":
 			sb.WriteString(s.Data["text"])
+		case "markdown":
+			// markdown 消息直接记录正文, 后台排查时能看到内容
+			sb.WriteString(s.Data["content"])
 		case "at":
 			sb.WriteString("[CQ:at,qq=" + s.Data["qq"] + "] ")
 		case "image":
