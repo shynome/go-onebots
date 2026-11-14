@@ -442,6 +442,9 @@ func (c *BotContext) resolveMediaURL(ctx context.Context, m mediaItem) (string, 
 // maxMirrorSize 内网媒体转存时允许的最大体积
 const maxMirrorSize = 20 << 20
 
+// mirrorTimeout 内网媒体下载超时, 慢内网的大文件可能要很久
+const mirrorTimeout = 3 * time.Minute
+
 // needMirror 判断 URL 是否指向内网或本机地址
 // QQ 服务器在公网, 拉不到这类地址, 必须先由服务端自己下载转存
 func needMirror(rawURL string) bool {
@@ -472,7 +475,7 @@ func needMirror(rawURL string) bool {
 
 // mirrorRemoteMedia 把内网媒体下载下来存进 PocketBase, 返回 QQ 可访问的预签名 URL
 func (c *BotContext) mirrorRemoteMedia(ctx context.Context, rawURL, kind string) (string, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, mirrorTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)

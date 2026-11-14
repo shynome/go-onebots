@@ -35,6 +35,8 @@ const (
 	dedupWindow = 10 * time.Minute
 	// dedupMax 去重表最多保存的消息数
 	dedupMax = 2000
+	// maxConcurrentActions 单个 OneBot 连接上同时处理的 action 上限
+	maxConcurrentActions = 16
 )
 
 type Manager struct {
@@ -429,17 +431,30 @@ func (m *Manager) ServeWS(e *core.RequestEvent) error {
 
 	slog.Info("onebot 客户端已连接", "bot", botID, "self_id", selfNum)
 
+	// action 并发处理: 客户端(ZeroBot)本身就是并发发请求的, 靠 echo 匹配响应。
+	// 串行处理会让慢 action(如内网媒体转存)阻塞同一连接上的其它请求。
+	sem := make(chan struct{}, maxConcurrentActions)
 	for {
 		var req actionRequest
 		if err := wsjson.Read(ctx, conn, &req); err != nil {
 			slog.Info("onebot 客户端断开", "bot", botID, "error", err)
 			return nil
 		}
-		resp := c.handleAction(ctx, req.Action, req.Params)
-		resp.Echo = req.Echo
-		if err := cl.writeJSON(ctx, resp); err != nil {
-			return nil
+
+		select {
+		case sem <- struct{}{}:
+		default:
+			// 并发已满, 直接排队等一个槽位, 不丢请求
+			sem <- struct{}{}
 		}
+		go func(req actionRequest) {
+			defer func() { <-sem }()
+			resp := c.handleAction(ctx, req.Action, req.Params)
+			resp.Echo = req.Echo
+			if err := cl.writeJSON(ctx, resp); err != nil {
+				slog.Debug("写回 action 结果失败", "bot", botID, "action", req.Action, "error", err)
+			}
+		}(req)
 	}
 }
 
