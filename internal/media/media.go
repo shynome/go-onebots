@@ -13,6 +13,14 @@ import (
 	"github.com/shynome/go-onebots/internal/storage"
 )
 
+const (
+	// dateLayout PocketBase 存库用的时间格式
+	dateLayout = "2006-01-02 15:04:05.000Z"
+	// touchInterval 命中缓存刷新 last_used 的最小间隔
+	// 热点图片每条消息都会被引用, 一小时一次足够精确, 又不至于频繁写库
+	touchInterval = time.Hour
+)
+
 type Store struct {
 	app    core.App
 	s3     *storage.S3
@@ -80,6 +88,8 @@ func (s *Store) FindImage(botID, source string) (Image, bool, error) {
 	if len(recs) == 0 {
 		return Image{}, false, nil
 	}
+	// 命中即视为一次使用, 刷新后清理不会把它当过期媒体删掉
+	s.touch(recs[0])
 	url, err := s.recordURL(recs[0])
 	if err != nil {
 		return Image{}, false, err
@@ -119,6 +129,7 @@ func (s *Store) save(botID, kind string, f *filesystem.File, extra map[string]an
 	rec.Set("kind", kind)
 	// key 是 system 字段且带唯一索引, 保留写入唯一值
 	rec.Set("key", fmt.Sprintf("%s-%d", kind, time.Now().UnixNano()))
+	rec.Set("last_used", time.Now())
 	rec.Set("file", f)
 	for k, v := range extra {
 		rec.Set(k, v)
@@ -129,6 +140,21 @@ func (s *Store) save(botID, kind string, f *filesystem.File, extra map[string]an
 		return "", fmt.Errorf("保存中转文件失败: %w", err)
 	}
 	return s.recordURL(rec)
+}
+
+// touch 刷新媒体最近使用时间
+// 直接写 SQL, 不走 app.Save, 以免顺带把 updated(最后修改时间) 刷成使用时间
+func (s *Store) touch(rec *core.Record) {
+	if last := rec.GetDateTime("last_used").Time(); !last.IsZero() && time.Since(last) < touchInterval {
+		return
+	}
+	_, err := s.app.DB().
+		NewQuery("UPDATE " + db.TableMedia + " SET last_used = {:now} WHERE id = {:id}").
+		Bind(dbx.Params{"now": time.Now().UTC().Format(dateLayout), "id": rec.Id}).
+		Execute()
+	if err != nil {
+		s.app.Logger().Warn("刷新媒体使用时间失败", "error", err, "media", rec.Id)
+	}
 }
 
 func (s *Store) recordURL(rec *core.Record) (string, error) {
@@ -149,7 +175,8 @@ func (s *Store) recordURL(rec *core.Record) (string, error) {
 	return u, nil
 }
 
-// Cleanup 删除 cutoff 前的记录, 关联文件由 PocketBase 自动删除
+// Cleanup 删除 cutoff 前已不再使用的记录, 关联文件由 PocketBase 自动删除
+// 按 last_used 判定: 老图只要还在被引用就会一直续期
 func (s *Store) Cleanup(cutoff time.Time, batch int) (int, error) {
 	if batch <= 0 {
 		batch = 200
@@ -158,8 +185,8 @@ func (s *Store) Cleanup(cutoff time.Time, batch int) (int, error) {
 	deleted := 0
 	for {
 		recs, err := s.app.FindRecordsByFilter(db.TableMedia,
-			"created < {:cutoff}", "created", batch, 0,
-			dbx.Params{"cutoff": cutoff.UTC().Format("2006-01-02 15:04:05.000Z")},
+			"(last_used < {:cutoff} || last_used = null)", "last_used", batch, 0,
+			dbx.Params{"cutoff": cutoff.UTC().Format(dateLayout)},
 		)
 		if err != nil {
 			return deleted, err
