@@ -66,10 +66,32 @@
 | 纯图片（1 张或多张） | 富媒体，多张会拆成多条 |
 | **文本 + 纯图片** | **Markdown 图文混排，一条消息可含多张图** |
 | 文本 + 视频/语音/文件 | 富媒体（markdown 不支持这些类型） |
+| 文本（或图片）+ `keyboard` 段 | Markdown + 内嵌键盘（互动按钮） |
 
 也可以显式发 markdown：`{"type":"markdown","data":{"content":"## 标题\n正文"}}`。
 自动拼接时普通文本会做转义（`*`、`_`、`#`、`[`、`]`、`~`、`|`、`>` 与行首的 `-`/`+`），
 不会被当成格式渲染；显式 markdown 段则原样发送，由你完全控制。
+
+**互动按钮（内嵌键盘）**：发一个 `keyboard` 段，会随 markdown 消息一起下发给 QQ：
+
+```json
+{
+  "type": "keyboard",
+  "data": {
+    "content": "{\"content\":{\"rows\":[{\"buttons\":[{\"id\":\"signin\",\"render_data\":{\"label\":\"签到\",\"style\":1},\"action\":{\"type\":2,\"permission\":{\"type\":1},\"data\":\"/签到\",\"enter\":true}}]}]}}"
+  }
+}
+```
+
+- `data.content` 填完整键盘对象（`{"id":"模板ID"}` 或 `{"content":{"rows":[...]}}`），
+  也可以只给按钮行数组 `[{"buttons":[...]}]`（自动包成 `content.rows`）；模板键盘也可用 `data.id`
+- 带按钮的消息一律走 markdown（`msg_type=2`），**必须同时有文本或图片**，否则按钮无处挂载会被跳过
+- 与 `record` / `video` / `file` 同发时按钮会被跳过（这三类走富媒体消息，挂不上键盘）
+- `action.type=2` 指令按钮：点击等同用户发送 `@bot data`，走普通消息事件，现有命令插件直接生效
+- 管理员专属：`"permission":{"type":1}`；`0`=指定用户（`specify_user_ids` 填成员 `member_openid`），`2`=所有人。
+  `permission` 属于 `Action`，对跳转 / 回调 / 指令三种按钮都生效，由客户端按点击者身份校验
+- 同一分组联动变灰是另一个字段：`Button.group_id`，**只有 `action.type=1`（回调按钮）时才有效**
+- `action.type=1` 回调按钮需订阅 `INTERACTION` 事件并响应，本服务未实现
 
 **限制（QQ 官方 API 本身）**
 

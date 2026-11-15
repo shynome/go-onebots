@@ -2,6 +2,7 @@ package qqbot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -40,6 +41,9 @@ type SendMessageRequest struct {
 	MsgType MsgType `json:"msg_type"`
 	// Markdown msg_type=2 时使用, 可图文混排并控制顺序
 	Markdown *Markdown `json:"markdown,omitempty"`
+	// Keyboard 内嵌键盘(互动按钮), 原样透传, 通常与 markdown 一起发送
+	// https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_messages.post.html#schema-keyboard
+	Keyboard json.RawMessage `json:"keyboard,omitempty"`
 	// Media msg_type=7 时使用的富媒体内容
 	Media *Media `json:"media,omitempty"`
 	// MessageReference 引用回复

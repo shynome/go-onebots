@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0] - 2026-11-15
+
+### 新增
+
+- **互动按钮（内嵌键盘）**：新增 `keyboard` 消息段，把 QQ 的 `keyboard` 字段透传给服务端
+  - 带按钮的消息自动改走 markdown（`msg_type=2`），`keyboard` 与 `markdown` 同时下发
+  - `data.content` 支持完整键盘对象、按钮行数组（自动包 `content.rows`）、以及 `data.id` 模板键盘
+  - `onebot_outbox` 新增 `keyboard` 字段（JSON），崩溃补发时按钮不会丢
+  - 与 `record` / `video` / `file` 同发、或没有文本/图片可挂载时按钮被跳过并打 warning
+  - 指令按钮（`action.type=2`）点击等同发 `@bot data` 消息，无需额外发事件订阅；
+    回调按钮（`action.type=1`）依赖 `INTERACTION` 事件，本次未实现
+
 ## [0.4.1] - 2026-11-15
 
 ### 变更

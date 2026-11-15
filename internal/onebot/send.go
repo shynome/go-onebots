@@ -40,6 +40,7 @@ type outbound struct {
 	content  string
 	markdown string    // 非空表示直接作为 markdown 发送(msg_type=2)
 	segments []Segment // 非空表示发送时拼成 markdown(文本+图片保序)
+	keyboard json.RawMessage
 	media    *mediaItem
 	// replyTo 引用回复的目标 OneBot message_id, 空表示不引用
 	replyTo string
@@ -111,6 +112,51 @@ func parseCQString(s string) []Segment {
 	return segs
 }
 
+// keyboardFromSegment 解析 keyboard 段, 返回可直接发给 QQ 的键盘 JSON
+// 支持三种写法(段里的 data 只能放字符串, 所以嵌套结构用 JSON 字符串表达):
+//   - data.content: 完整键盘对象, 如 {"content":{"rows":[...]}} 或 {"id":"..."}
+//   - data.content: 仅按钮行数组 [{"buttons":[...]}], 自动包成 content.rows
+//   - data.id: 平台预设键盘模板 ID, 等价于 {"id":"..."}
+func keyboardFromSegment(s Segment) (json.RawMessage, error) {
+	raw := strings.TrimSpace(s.Data["content"])
+	if raw == "" {
+		if id := strings.TrimSpace(s.Data["id"]); id != "" {
+			kb, err := json.Marshal(map[string]string{"id": id})
+			if err != nil {
+				return nil, err
+			}
+			return kb, nil
+		}
+		return nil, fmt.Errorf("缺少 content 或 id")
+	}
+	if !json.Valid([]byte(raw)) {
+		return nil, fmt.Errorf("content 不是合法 JSON")
+	}
+	if raw[0] == '[' {
+		// 只给了按钮行, 补上 keyboard.content.rows 外壳
+		kb, err := json.Marshal(map[string]any{
+			"content": map[string]json.RawMessage{"rows": json.RawMessage(raw)},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return kb, nil
+	}
+	if raw[0] != '{' {
+		return nil, fmt.Errorf("content 需要是 JSON 对象或数组")
+	}
+	return json.RawMessage(raw), nil
+}
+
+func hasNonImageMedia(medias []mediaItem) bool {
+	for _, m := range medias {
+		if m.kind != "image" {
+			return true
+		}
+	}
+	return false
+}
+
 // buildOutbounds 把消息段编排成若干条 QQ 消息
 // 一条 QQ 消息只能带一个媒体, 文本附在第一条媒体上
 // at 段会转成 content 里的 <@openid> / <@all> 标记
@@ -119,6 +165,7 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	var medias []mediaItem
 	var markdown string
 	var replyTo string
+	var keyboard json.RawMessage
 	// 群聊的 @用户 只支持 markdown 消息, 有单人 at 时优先走 markdown
 	var atUser bool
 
@@ -134,6 +181,14 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 		case "markdown":
 			// 显式 markdown 段: 原样交给 QQ, 用于图文混排
 			markdown = s.Data["content"]
+		case "keyboard":
+			// 内嵌键盘(互动按钮), QQ 侧只认挂载在 markdown 消息上的形式
+			kb, err := keyboardFromSegment(s)
+			if err != nil {
+				skipped = append(skipped, "keyboard("+err.Error()+")")
+				continue
+			}
+			keyboard = kb
 		case "at":
 			qq := s.Data["qq"]
 			switch {
@@ -170,6 +225,22 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	}
 
 	text := strings.TrimSpace(sb.String())
+
+	// 带按钮的消息必须以 markdown(msg_type=2) 发送, 所以这里优先走 markdown 分支
+	if len(keyboard) > 0 {
+		switch {
+		case markdown != "":
+			return attachReply([]outbound{{markdown: markdown, keyboard: keyboard}}), skipped
+		case hasNonImageMedia(medias):
+			skipped = append(skipped, "keyboard(不能与语音/视频/文件同发)")
+		default:
+			if mdSegs := markdownTextSegments(segs); len(mdSegs) > 0 {
+				return attachReply([]outbound{{segments: mdSegs, keyboard: keyboard}}), skipped
+			}
+			skipped = append(skipped, "keyboard(需要同时有文本内容)")
+		}
+	}
+
 	if markdown != "" {
 		out = append(out, outbound{markdown: markdown})
 		return attachReply(out), skipped
@@ -270,6 +341,7 @@ func (c *BotContext) enqueueOutbound(scene, openid string, ob outbound) (*core.R
 		Target:   openid,
 		Content:  ob.content,
 		Markdown: ob.markdown,
+		Keyboard: ob.keyboard,
 	}
 	if ob.replyTo != "" {
 		// OneBot message_id -> 入站事件里的 msg_idx, QQ 的 message_reference 用它
@@ -392,8 +464,23 @@ func (c *BotContext) deliverOnce(ctx context.Context, b *bot.Bot, rec *core.Reco
 	if ref := rec.GetString("reply_to"); ref != "" {
 		req.MessageReference = &qqbot.MessageReference{MessageID: ref}
 	}
+	// 内嵌键盘: 与 markdown 一起发送, 用户端会在消息底部挂按钮
+	if kb := outboxKeyboard(rec); len(kb) > 0 {
+		req.Keyboard = kb
+	}
 
 	return c.sendQQMessage(ctx, b, scene, openid, req)
+}
+
+// outboxKeyboard 取出待发送的内嵌键盘 JSON
+func outboxKeyboard(rec *core.Record) json.RawMessage {
+	raw, _ := rec.Get("keyboard").(types.JSONRaw)
+	if len(raw) == 0 {
+		if v, ok := rec.Get("keyboard").(string); ok {
+			raw = types.JSONRaw(v)
+		}
+	}
+	return json.RawMessage(raw)
 }
 
 // outboxSegments 取出待拼 markdown 的原始段
@@ -446,6 +533,10 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 		if ob.media != nil {
 			segs = append(segs, Segment{Type: ob.media.kind, Data: map[string]string{"file": ob.media.file}})
 		}
+	}
+	// 按钮也记进消息日志, get_msg / 群历史里能看出来发过键盘
+	if kb := outboxKeyboard(rec); len(kb) > 0 {
+		segs = append(segs, Segment{Type: "keyboard", Data: map[string]string{"content": string(kb)}})
 	}
 
 	selfNum, selfName := c.self()

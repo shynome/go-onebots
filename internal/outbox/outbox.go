@@ -36,6 +36,7 @@ type Item struct {
 	Content   string
 	Markdown  string
 	Segments  []byte // 非空时按 markdown 发送: 文本与图片按原顺序拼接
+	Keyboard  []byte // 非空时附带内嵌键盘(互动按钮)
 	MediaKind string
 	MediaFile string
 	MediaURL  string
@@ -59,6 +60,9 @@ func (s *Store) Enqueue(it Item) (*core.Record, error) {
 	r.Set("markdown", it.Markdown)
 	if len(it.Segments) > 0 {
 		r.Set("segments", types.JSONRaw(it.Segments))
+	}
+	if len(it.Keyboard) > 0 {
+		r.Set("keyboard", types.JSONRaw(it.Keyboard))
 	}
 	r.Set("media_kind", it.MediaKind)
 	r.Set("media_file", it.MediaFile)

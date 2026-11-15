@@ -134,4 +134,95 @@ func TestBuildOutbounds(t *testing.T) {
 			t.Fatalf("应记录 face 被跳过: %+v", skipped)
 		}
 	})
+
+	t.Run("带键盘的文本走 markdown", func(t *testing.T) {
+		kb := `{"content":{"rows":[{"buttons":[{"id":"signin","action":{"type":2,"permission":{"type":1},"data":"/签到"}}]}]}}`
+		out, skipped := c.buildOutbounds([]Segment{
+			textSegment("点按钮签到"),
+			{Type: "keyboard", Data: map[string]string{"content": kb}},
+		}, "group")
+		if len(skipped) != 0 {
+			t.Fatalf("不应跳过任何段: %+v", skipped)
+		}
+		if len(out) != 1 {
+			t.Fatalf("应合成 1 条, 实际 %d", len(out))
+		}
+		if string(out[0].keyboard) != kb {
+			t.Fatalf("键盘应原样透传: %s", out[0].keyboard)
+		}
+		// 按钮必须挂在 markdown 消息上
+		if out[0].markdown != "" || len(out[0].segments) != 1 || out[0].segments[0].Type != "text" {
+			t.Fatalf("应走 markdown 段: %+v", out[0])
+		}
+	})
+
+	t.Run("键盘只给按钮行数组时自动包外壳", func(t *testing.T) {
+		out, _ := c.buildOutbounds([]Segment{
+			textSegment("t"),
+			{Type: "keyboard", Data: map[string]string{"content": `[{"buttons":[]}]`}},
+		}, "group")
+		if len(out) != 1 {
+			t.Fatalf("应合成 1 条, 实际 %d", len(out))
+		}
+		var kb struct {
+			Content struct {
+				Rows []map[string]any `json:"rows"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(out[0].keyboard, &kb); err != nil {
+			t.Fatal(err)
+		}
+		if len(kb.Content.Rows) != 1 {
+			t.Fatalf("应包装成 content.rows: %s", out[0].keyboard)
+		}
+	})
+
+	t.Run("键盘模板 id 直接成对", func(t *testing.T) {
+		out, _ := c.buildOutbounds([]Segment{
+			textSegment("t"),
+			{Type: "keyboard", Data: map[string]string{"id": "kb_1"}},
+		}, "group")
+		if len(out) != 1 || string(out[0].keyboard) != `{"id":"kb_1"}` {
+			t.Fatalf("解析错误: %+v", out)
+		}
+	})
+
+	t.Run("没有文本时键盘被跳过", func(t *testing.T) {
+		out, skipped := c.buildOutbounds([]Segment{
+			{Type: "keyboard", Data: map[string]string{"content": `{"content":{"rows":[]}}`}},
+		}, "group")
+		if len(out) != 0 {
+			t.Fatalf("没有文本不应发送: %+v", out)
+		}
+		if len(skipped) != 1 || skipped[0] != "keyboard(需要同时有文本内容)" {
+			t.Fatalf("应记录跳过原因: %+v", skipped)
+		}
+	})
+
+	t.Run("键盘与视频同发时跳过键盘", func(t *testing.T) {
+		out, skipped := c.buildOutbounds([]Segment{
+			textSegment("t"),
+			{Type: "video", Data: map[string]string{"file": "v"}},
+			{Type: "keyboard", Data: map[string]string{"content": `{"content":{"rows":[]}}`}},
+		}, "group")
+		if len(out) != 1 || out[0].media == nil {
+			t.Fatalf("应照常发视频: %+v", out)
+		}
+		if len(skipped) != 1 || skipped[0] != "keyboard(不能与语音/视频/文件同发)" {
+			t.Fatalf("应记录跳过原因: %+v", skipped)
+		}
+	})
+
+	t.Run("键盘 JSON 非法被跳过", func(t *testing.T) {
+		out, skipped := c.buildOutbounds([]Segment{
+			textSegment("t"),
+			{Type: "keyboard", Data: map[string]string{"content": "{oops"}},
+		}, "group")
+		if len(out) != 1 || out[0].content != "t" {
+			t.Fatalf("文本应照常发送: %+v", out)
+		}
+		if len(skipped) != 1 || skipped[0] != "keyboard(content 不是合法 JSON)" {
+			t.Fatalf("应记录跳过原因: %+v", skipped)
+		}
+	})
 }
