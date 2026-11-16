@@ -158,16 +158,15 @@ func hasNonImageMedia(medias []mediaItem) bool {
 }
 
 // buildOutbounds 把消息段编排成若干条 QQ 消息
-// 一条 QQ 消息只能带一个媒体, 文本附在第一条媒体上
-// at 段会转成 content 里的 <@openid> / <@all> 标记
+// 默认都走 markdown(msg_type=2); 只有语音/视频/文件这些 markdown 表达不了的媒体
+// 才退回富媒体消息, 且一条消息只能带一个媒体
+// at 段会转成 <qqbot-at-everyone /> / <qqbot-at-user /> 标记
 func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outbound, skipped []string) {
 	var sb strings.Builder
 	var medias []mediaItem
 	var markdown string
 	var replyTo string
 	var keyboard json.RawMessage
-	// 群聊的 @用户 只支持 markdown 消息, 有单人 at 时优先走 markdown
-	var atUser bool
 
 	for _, s := range segs {
 		switch s.Type {
@@ -195,11 +194,11 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 			case scene != "group":
 				skipped = append(skipped, "at(私聊)")
 			case qq == "all":
-				// @全体 文本消息与 markdown 都支持, 这里写给纯文本路径
+				// @全体 写进文本, markdown 与纯文本消息都支持
 				sb.WriteString("<qqbot-at-everyone />")
 			default:
-				// 单人的 @ 标记格式未找到官方说明, 先跳过
-				skipped = append(skipped, "at(仅支持 @全体)")
+				// 单人 @ 依赖群成员 openid 映射, 发送时由 markdownFromSegments 处理
+				// 映射不到时这段会被忽略
 			}
 		case "image", "record", "video", "file":
 			file := s.Data["file"]
@@ -225,61 +224,40 @@ func (c *BotContext) buildOutbounds(segs []Segment, scene string) (out []outboun
 	}
 
 	text := strings.TrimSpace(sb.String())
+	// markdown 能表达的段(文本 / 图片 / at), 也是默认的发送形态
+	mdSegs := markdownTextSegments(segs)
 
-	// 带按钮的消息必须以 markdown(msg_type=2) 发送, 所以这里优先走 markdown 分支
-	if len(keyboard) > 0 {
-		switch {
-		case markdown != "":
-			return attachReply([]outbound{{markdown: markdown, keyboard: keyboard}}), skipped
-		case hasNonImageMedia(medias):
+	// 显式 markdown 段原样发送, 键盘只能挂在 markdown 消息上
+	if markdown != "" {
+		return attachReply([]outbound{{markdown: markdown, keyboard: keyboard}}), skipped
+	}
+
+	// 只有混入语音/视频/文件(markdown 不支持)时才退回富媒体, 一条消息一个媒体
+	if hasNonImageMedia(medias) {
+		if len(keyboard) > 0 {
 			skipped = append(skipped, "keyboard(不能与语音/视频/文件同发)")
-		default:
-			if mdSegs := markdownTextSegments(segs); len(mdSegs) > 0 {
-				return attachReply([]outbound{{segments: mdSegs, keyboard: keyboard}}), skipped
-			}
+		}
+		out = append(out, outbound{content: text, media: &medias[0]})
+		for i := 1; i < len(medias); i++ {
+			m := medias[i]
+			out = append(out, outbound{media: &m})
+		}
+		if len(out) > maxOutbounds {
+			skipped = append(skipped, fmt.Sprintf("超出单次发送上限 %d 条", len(out)-maxOutbounds))
+			out = out[:maxOutbounds]
+		}
+		return attachReply(out), skipped
+	}
+
+	// 没有可发送的内容(空白文本 / 只有被跳过的段)时不发空消息
+	if len(mdSegs) == 0 || (text == "" && len(medias) == 0) {
+		if len(keyboard) > 0 {
 			skipped = append(skipped, "keyboard(需要同时有文本内容)")
 		}
+		return nil, skipped
 	}
 
-	if markdown != "" {
-		out = append(out, outbound{markdown: markdown})
-		return attachReply(out), skipped
-	}
-	if len(medias) == 0 || onlyImages(medias) {
-		if atUser {
-			if mdSegs := markdownTextSegments(segs); len(mdSegs) > 0 {
-				return attachReply([]outbound{{segments: mdSegs}}), skipped
-			}
-		}
-	}
-	if atUser {
-		skipped = append(skipped, "at(单人, 与语音/视频/文件共存时不支持)")
-	}
-
-	if len(medias) == 0 {
-		if text != "" {
-			out = append(out, outbound{content: text})
-		}
-		return attachReply(out), skipped
-	}
-
-	// 文本 + 纯图片: 改用 markdown, 否则 QQ 富媒体消息固定把图片排在文字前面
-	if text != "" && onlyImages(medias) {
-		if mdSegs := markdownTextSegments(segs); len(mdSegs) > 1 {
-			return attachReply([]outbound{{segments: mdSegs}}), skipped
-		}
-	}
-
-	out = append(out, outbound{content: text, media: &medias[0]})
-	for i := 1; i < len(medias); i++ {
-		m := medias[i]
-		out = append(out, outbound{media: &m})
-	}
-	if len(out) > maxOutbounds {
-		skipped = append(skipped, fmt.Sprintf("超出单次发送上限 %d 条", len(out)-maxOutbounds))
-		out = out[:maxOutbounds]
-	}
-	return attachReply(out), skipped
+	return attachReply([]outbound{{segments: mdSegs, keyboard: keyboard}}), skipped
 }
 func fileTypeOf(kind string) qqbot.FileType {
 	switch kind {
@@ -526,6 +504,9 @@ func (c *BotContext) recordSent(rec *core.Record, messageID string) {
 	segs := make([]Segment, 0, 2)
 	if md := rec.GetString("markdown"); md != "" {
 		segs = append(segs, Segment{Type: "markdown", Data: map[string]string{"content": md}})
+	} else if stored := outboxSegments(rec); len(stored) > 0 {
+		// 发送时拼成 markdown 的图文消息: 用原始段记录, get_msg / 群历史里能看到内容
+		segs = append(segs, stored...)
 	} else {
 		if ob.content != "" {
 			segs = append(segs, textSegment(ob.content))

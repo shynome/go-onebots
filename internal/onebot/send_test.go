@@ -49,10 +49,13 @@ func TestParseSegmentsArray(t *testing.T) {
 func TestBuildOutbounds(t *testing.T) {
 	c := &BotContext{}
 
-	t.Run("纯文本", func(t *testing.T) {
+	t.Run("纯文本也走 markdown", func(t *testing.T) {
 		out, _ := c.buildOutbounds([]Segment{textSegment("hello")}, "group")
-		if len(out) != 1 || out[0].media != nil || out[0].content != "hello" {
+		if len(out) != 1 || out[0].media != nil {
 			t.Fatalf("解析错误: %+v", out)
+		}
+		if len(out[0].segments) != 1 || out[0].segments[0].Data["text"] != "hello" {
+			t.Fatalf("纯文本应转成 markdown 段: %+v", out[0])
 		}
 	})
 
@@ -81,23 +84,40 @@ func TestBuildOutbounds(t *testing.T) {
 		}
 	})
 
-	t.Run("纯图片多张拆多条", func(t *testing.T) {
+	t.Run("纯图片多张合成一条 markdown", func(t *testing.T) {
 		out, _ := c.buildOutbounds([]Segment{
 			{Type: "image", Data: map[string]string{"file": "a"}},
 			{Type: "image", Data: map[string]string{"file": "b"}},
 		}, "group")
-		if len(out) != 2 {
-			t.Fatalf("应拆成 2 条, 实际 %d", len(out))
+		if len(out) != 1 {
+			t.Fatalf("应合成 1 条, 实际 %d", len(out))
 		}
-		if out[0].media.file != "a" || out[1].media.file != "b" {
+		if len(out[0].segments) != 2 || out[0].media != nil {
+			t.Fatalf("应转成 2 段 markdown: %+v", out[0])
+		}
+		if out[0].segments[0].Data["file"] != "a" || out[0].segments[1].Data["file"] != "b" {
 			t.Fatalf("顺序错误: %+v", out)
 		}
 	})
 
-	t.Run("纯图片超出被动回复上限截断", func(t *testing.T) {
+	t.Run("纯图片多张不受被动回复条数限制", func(t *testing.T) {
 		segs := []Segment{}
 		for i := 0; i < 7; i++ {
 			segs = append(segs, Segment{Type: "image", Data: map[string]string{"file": "u"}})
+		}
+		out, skipped := c.buildOutbounds(segs, "group")
+		if len(out) != 1 || len(out[0].segments) != 7 {
+			t.Fatalf("应合成 1 条 7 段 markdown, 实际 %+v", out)
+		}
+		if len(skipped) != 0 {
+			t.Fatalf("不应丢弃任何段: %+v", skipped)
+		}
+	})
+
+	t.Run("文本加视频超出上限截断", func(t *testing.T) {
+		segs := []Segment{textSegment("t")}
+		for i := 0; i < 7; i++ {
+			segs = append(segs, Segment{Type: "video", Data: map[string]string{"file": "v"}})
 		}
 		out, skipped := c.buildOutbounds(segs, "group")
 		if len(out) != maxOutbounds {
@@ -127,7 +147,7 @@ func TestBuildOutbounds(t *testing.T) {
 			{Type: "face", Data: map[string]string{"id": "1"}},
 			textSegment("hi"),
 		}, "group")
-		if len(out) != 1 || out[0].content != "hi" {
+		if len(out) != 1 || len(out[0].segments) != 1 || out[0].segments[0].Type != "text" {
 			t.Fatalf("解析错误: %+v", out)
 		}
 		if len(skipped) != 1 || skipped[0] != "face" {
@@ -218,7 +238,7 @@ func TestBuildOutbounds(t *testing.T) {
 			textSegment("t"),
 			{Type: "keyboard", Data: map[string]string{"content": "{oops"}},
 		}, "group")
-		if len(out) != 1 || out[0].content != "t" {
+		if len(out) != 1 || len(out[0].segments) != 1 || out[0].segments[0].Type != "text" {
 			t.Fatalf("文本应照常发送: %+v", out)
 		}
 		if len(skipped) != 1 || skipped[0] != "keyboard(content 不是合法 JSON)" {

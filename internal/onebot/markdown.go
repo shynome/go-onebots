@@ -39,19 +39,6 @@ func markdownTextSegments(segs []Segment) []Segment {
 	return out
 }
 
-// onlyImages 判断媒体是否全是图片(markdown 只支持图片)
-func onlyImages(medias []mediaItem) bool {
-	if len(medias) == 0 {
-		return false
-	}
-	for _, m := range medias {
-		if m.kind != "image" {
-			return false
-		}
-	}
-	return true
-}
-
 // imageSize 解析图片宽高, 失败返回 0,0
 func imageSize(data []byte) (int, int) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
