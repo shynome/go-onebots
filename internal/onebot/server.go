@@ -30,7 +30,7 @@ const (
 	pingInterval   = 30 * time.Second
 	writeTimeout   = 10 * time.Second
 	handshakeExtra = "go-onebots"
-	// pendingRetention 离线补发窗口, 超过该时长的消息被动回复已失效, 补发无意义
+	// pendingRetention 离线补发窗口, 更早的事件补发意义不大, 避免插件处理陈旧消息
 	pendingRetention = 30 * time.Minute
 	// maxPending 离线队列上限, 超出丢弃最旧的
 	maxPending = 2000

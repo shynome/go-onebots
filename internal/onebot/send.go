@@ -27,7 +27,7 @@ import (
 	"github.com/shynome/go-onebots/internal/qqbot"
 )
 
-// maxOutbounds QQ 被动回复最多 5 条
+// maxOutbounds 单次发送最多条数, 避免一次刷屏
 const maxOutbounds = 5
 
 type mediaItem struct {
@@ -292,7 +292,7 @@ func retryBackoff(attempt int) time.Duration {
 	return sendRetryBase * time.Duration(1<<attempt)
 }
 
-// sendOutbounds 按编排结果逐条发送, 每条都消耗一次被动回复序号
+// sendOutbounds 按编排结果逐条发送, 前一条成功后才发下一条
 // 每条消息先写 outbox 再发送, 进程崩溃后可以由定时任务补发
 func (c *BotContext) sendOutbounds(ctx context.Context, b *bot.Bot, scene, openid string, out []outbound) (qqbot.SendResult, error) {
 	var last qqbot.SendResult

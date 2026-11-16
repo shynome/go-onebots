@@ -1,7 +1,8 @@
 // ZeroBot 冒烟测试: 群里 @机器人 发 "/hello" 或私聊发 "/hello"
 //
 // 默认走 WebSocket; ONEBOT_MODE=http 时改走 HTTP driver:
-// action 走 HTTP 打到服务端, 事件需要服务端 POST 到 ONEBOT_HTTP_LISTEN
+// action(发消息) 走 HTTP 打到服务端, 事件需要服务端 POST 到 ONEBOT_HTTP_LISTEN
+// 注意: go-onebots 只实现 action 接口, 不上报事件, 所以 HTTP 模式只能发消息
 package main
 
 import (
