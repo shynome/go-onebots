@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1] - 2026-11-16
+
+### 变更
+
+- **网关重连改用 `github.com/avast/retry-go/v5`**：移除手写的退避循环与 `backoffDelay`
+  - 无限重试 + 指数退避 + 抖动，单次等待上限 1s（与 libredesk-qqbot 策略一致）
+  - 重连日志改在 `OnRetry` 中记录 `attempt`，避免 `time.Duration` 无法被 json v2 序列化
+  - ctx 主动取消时不再打印重连日志
+
 ## [0.5.0] - 2026-11-15
 
 ### 新增
