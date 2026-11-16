@@ -3,6 +3,7 @@ module github.com/shynome/go-onebots
 go 1.27.0
 
 require (
+	github.com/avast/retry-go/v5 v5.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/pocketbase/dbx v1.12.0

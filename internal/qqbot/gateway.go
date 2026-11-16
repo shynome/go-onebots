@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/avast/retry-go/v5"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -33,7 +34,6 @@ func (c *Client) Gateway(ctx context.Context) (GatewayInfo, error) {
 const (
 	wsWriteTimeout   = 10 * time.Second
 	defaultHeartbeat = 30 * time.Second
-	maxBackoff       = 30 * time.Second
 )
 
 // Events 建立网关连接并持续推送事件, 内部负责心跳与断线重连(resume)
@@ -42,42 +42,23 @@ func (c *Client) Events(ctx context.Context, intents Intent) <-chan Payload {
 	out := make(chan Payload, 64)
 	go func() {
 		defer close(out)
-
-		var failures int
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			start := time.Now()
-			if err := c.runOnce(ctx, intents, out); ctx.Err() != nil {
-				return
-			} else {
-				if time.Since(start) > time.Minute {
-					failures = 0
-				}
-				failures++
-				delay := backoffDelay(failures)
-				c.logger().Warn("qq 网关连接结束, 准备重连", "error", err, "delay", delay)
-				select {
-				case <-ctx.Done():
+		// 无限重试, 指数退避 + 抖动, 单次等待最多 1s
+		retry.New(
+			retry.Context(ctx),
+			retry.Attempts(0),
+			retry.MaxDelay(time.Second),
+			retry.OnRetry(func(n uint, err error) {
+				if ctx.Err() != nil {
+					// 主动关闭时不算异常退出, 不打重连日志
 					return
-				case <-time.After(delay):
 				}
-			}
-		}
+				c.logger().Warn("qq 网关连接结束, 准备重连", "error", err, "attempt", n+1)
+			}),
+		).Do(func() error {
+			return c.runOnce(ctx, intents, out)
+		})
 	}()
 	return out
-}
-
-func backoffDelay(failures int) time.Duration {
-	if failures <= 0 {
-		return time.Second
-	}
-	d := time.Second << min(failures-1, 5)
-	if d > maxBackoff {
-		d = maxBackoff
-	}
-	return d
 }
 
 func (c *Client) runOnce(ctx context.Context, intents Intent, out chan<- Payload) (err error) {
